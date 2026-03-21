@@ -65,6 +65,7 @@ struct MilitaryOperationsView: View {
                         currentPos: SIMD2<Float>(arState.position.x, arState.position.z),
                         heading: arState.heading,
                         pins: arState.pins,
+                        peers: arState.peers,
                         accentColor: hue,
                         onClose: {
                             withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
@@ -214,6 +215,7 @@ struct MilitaryOperationsView: View {
                     currentPos: SIMD2<Float>(arState.position.x, arState.position.z),
                     heading: arState.heading,
                     pins: arState.pins,
+                    peers: arState.peers,
                     scale: 90.0 / 2.0 / 8.0,
                     offset: .zero,
                     centerOnUser: true,
@@ -366,6 +368,7 @@ struct MilitaryOperationsView: View {
                     currentPos: SIMD2<Float>(arState.position.x, arState.position.z),
                     heading: arState.heading,
                     pins: arState.pins,
+                    peers: arState.peers,
                     scale: mapSize / 2.0 / 8.0,
                     offset: .zero,
                     centerOnUser: true,
