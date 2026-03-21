@@ -3,11 +3,30 @@ import RealityKit
 import ARKit
 
 struct ContentView: View {
+    let useCase: UseCase
+    var accentColor: Color { useCase.accentColor }
+    
+    @State private var showPinWheel = false
+    @State private var selectedPinIndex: Int? = nil
+    
     var body: some View {
-        ARViewContainer()
-                    .ignoresSafeArea()
+        ZStack{
+            ARViewContainer()
+                .ignoresSafeArea()
+            
+            if showPinWheel {
+                PinWheelOverlay(
+                    labels: useCase.pinLabels,
+                    accentColor: accentColor,
+                    selectedIndex: selectedPinIndex
+                )
+                .allowsHitTesting(false)
+                .ignoresSafeArea()
+                .zIndex(15)
             }
         }
+    }
+}
 
 struct ARViewContainer: UIViewRepresentable {
     func makeUIView(context: Context) -> ARView {
