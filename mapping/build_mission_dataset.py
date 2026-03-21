@@ -16,14 +16,14 @@ def parse_xmp(xmp_path):
     root = tree.getroot()
 
     # Namespace directory to use as lookup tags in xmp files
-    nd = {
+    ns = {
         'rdf': 'http://www.w3.org/1999/02/22-rdf-syntax-ns#',  # rdf means right down forward
         'camera': 'http://wallhax.io/ns/camera/1.0/',
         'pose': 'http://wallhax.io/ns/pose/1.0/',
         'tiff': 'http://ns.adobe.com/tiff/1.0/'
     }
 
-    desc = root.find('.//rdf:Description', nd)
+    desc = root.find('.//rdf:Description', ns)
     if desc is None: return None 
 
     # Parse intrinsics
