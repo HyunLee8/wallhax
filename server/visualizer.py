@@ -14,6 +14,7 @@ from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
 MAX_TRAJECTORY_POINTS = 5000
 CLIENT_TIMEOUT = 3.0
+MIN_RENDER_INTERVAL = 0.1  # cap redraws at 10fps
 
 CLIENT_COLORS = [
     '#E8655A',  # warm coral
@@ -67,10 +68,13 @@ class Visualizer:
         self._pins: list[tuple[list, str]] = []
         self._planes: dict[str, dict] = {}  # plane_id -> plane data (persistent)
         self._lock = threading.Lock()
+        self._dirty = False
+        self._last_render = 0.0
 
     def add_pin(self, position: list, label: str):
         with self._lock:
             self._pins.append((position, label))
+            self._dirty = True
 
     def update_planes(self, client_id: str, planes: list) -> None:
         with self._lock:
@@ -78,6 +82,7 @@ class Visualizer:
                 pid = plane.get('id')
                 if pid:
                     self._planes[pid] = {**plane, '_client_id': client_id}
+            self._dirty = True
 
     def update(self, client_id: str, position: list,
                tracking_state: str, origin_locked: bool):
@@ -91,14 +96,27 @@ class Visualizer:
             state.tracking_state = tracking_state
             state.origin_locked = origin_locked
             state.last_seen = time.time()
+            self._dirty = True
 
     def render(self):
+        now = time.time()
+
         with self._lock:
-            cutoff = time.time() - CLIENT_TIMEOUT
+            cutoff = now - CLIENT_TIMEOUT
             stale = [cid for cid, s in self._clients.items() if s.last_seen < cutoff]
             for cid in stale:
                 del self._clients[cid]
                 del self._client_colors[cid]
+            if stale:
+                self._dirty = True
+
+            if not self._dirty or (now - self._last_render) < MIN_RENDER_INTERVAL:
+                self._fig.canvas.flush_events()
+                time.sleep(0.05)
+                return
+
+            self._dirty = False
+            self._last_render = now
 
             snapshot = {
                 cid: (
@@ -241,7 +259,8 @@ class Visualizer:
                  color='#66BB6A' if any_locked else '#FFAB40',
                  fontfamily='monospace', transform=fig.transFigure)
 
-        plt.pause(0.05)
+        fig.canvas.draw()
+        fig.canvas.flush_events()
 
         for txt in fig.texts:
             txt.remove()

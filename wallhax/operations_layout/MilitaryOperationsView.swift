@@ -63,13 +63,30 @@ struct MilitaryOperationsView: View {
                 }
 
                 if showFullMap {
-                    FullMapView(
+//                    FullMapView(
+//                        trajectory: arState.trajectory,
+//                        currentPos: SIMD2<Float>(arState.position.x, arState.position.z),
+//                        heading: arState.heading,
+//                        pins: arState.pins,
+//                        peers: arState.peers,
+//                        walls: arState.walls,
+//                        accentColor: hue,
+//                        onClose: {
+//                            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+//                                showFullMap = false
+//                            }
+//                        }
+//                    )
+//                    .transition(.opacity)
+//                    .zIndex(10)
+                    FullMap3DView(
                         trajectory: arState.trajectory,
                         currentPos: SIMD2<Float>(arState.position.x, arState.position.z),
                         heading: arState.heading,
                         pins: arState.pins,
                         peers: arState.peers,
-                        walls: arState.walls,
+                        walls: arState.walls as! [Wall3D],
+                        floors: arState.floors,
                         accentColor: hue,
                         onClose: {
                             withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {

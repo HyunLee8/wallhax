@@ -5,9 +5,18 @@ import SwiftUI
 private let peerTimeout: TimeInterval = 3.0
 private let wallRefreshInterval: TimeInterval = 30.0
 
-struct WallSegment {
-    let start: SIMD2<Float>
-    let end: SIMD2<Float>
+struct HFloor {
+    let center: SIMD3<Float>
+    let widthX: Float
+    let depthZ: Float
+    let xDirXZ: SIMD2<Float>  // unit vector: local X axis projected onto world XZ
+}
+
+struct Wall3D {
+    let center: SIMD3<Float>
+    let width: Float           // extent along local X (horizontal along wall surface)
+    let height: Float          // extent along local Z (vertical for vertical planes)
+    let xDirXZ: SIMD2<Float>   // unit vector: local X direction in world XZ
 }
 
 struct PeerMapState {
@@ -28,12 +37,14 @@ class ARState: ObservableObject {
     @Published var distanceWalked: Float = 0
     @Published var isRelayConnected: Bool = NetworkingManager.shared.serverDiscovered
     @Published var peers: [String: PeerMapState] = [:]
-    @Published var walls: [WallSegment] = []
+    @Published var walls: [Wall3D] = []
+    @Published var floors: [HFloor] = []
 
     private var lastPosition: SIMD3<Float>?
     private var pruneTimer: Timer?
     private var wallRefreshTimer: Timer?
-    private var wallsByClient: [String: [WallSegment]] = [:]
+    private var wallsByClient: [String: [Wall3D]] = [:]
+    private var floorsByClient: [String: [HFloor]] = [:]
 
     private init() {
         pruneTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
@@ -60,16 +71,25 @@ class ARState: ObservableObject {
     }
 
     private func setAllWalls(from planes: [[String: Any]]) {
-        wallsByClient = ["__sync__": wallSegments(from: planes)]
-        walls = wallsByClient["__sync__"]!
+        updatePlanes(clientId: "__sync__", from: planes)
     }
 
     private func updatePeerWalls(clientId: String, from planes: [[String: Any]]) {
-        wallsByClient[clientId] = wallSegments(from: planes)
-        walls = wallsByClient.values.flatMap { $0 }
+        updatePlanes(clientId: clientId, from: planes)
     }
 
-    private func wallSegments(from planes: [[String: Any]]) -> [WallSegment] {
+    func updateLocalPlanes(_ planes: [[String: Any]]) {
+        updatePlanes(clientId: "__local__", from: planes)
+    }
+
+    private func updatePlanes(clientId: String, from planes: [[String: Any]]) {
+        wallsByClient[clientId]  = wall3DSegments(from: planes)
+        floorsByClient[clientId] = floorSegments(from: planes)
+        walls  = wallsByClient.values.flatMap { $0 }
+        floors = floorsByClient.values.flatMap { $0 }
+    }
+
+    private func wall3DSegments(from planes: [[String: Any]]) -> [Wall3D] {
         planes.compactMap { plane in
             guard plane["alignment"] as? String == "vertical",
                   let center = plane["center"] as? [NSNumber], center.count == 3,
@@ -77,17 +97,42 @@ class ARState: ObservableObject {
                   let transform = plane["transform"] as? [NSNumber], transform.count == 16
             else { return nil }
 
-            let centerXZ = SIMD2<Float>(center[0].floatValue, center[2].floatValue)
             let f = transform.map { $0.floatValue }
             let axisXZ = SIMD2<Float>(f[0], f[2])
             let axisLen = simd_length(axisXZ)
             guard axisLen > 0.001 else { return nil }
 
-            let dir = axisXZ / axisLen
-            let halfW = extent[0].floatValue / 2
-            return WallSegment(start: centerXZ - halfW * dir, end: centerXZ + halfW * dir)
+            return Wall3D(
+                center: SIMD3<Float>(center[0].floatValue, center[1].floatValue, center[2].floatValue),
+                width: extent[0].floatValue,
+                height: extent[1].floatValue,
+                xDirXZ: axisXZ / axisLen
+            )
         }
     }
+
+    private func floorSegments(from planes: [[String: Any]]) -> [HFloor] {
+        planes.compactMap { plane in
+            guard plane["alignment"] as? String == "horizontal",
+                  let center = plane["center"] as? [NSNumber], center.count == 3,
+                  let extent = plane["extent"] as? [NSNumber], extent.count == 2,
+                  let transform = plane["transform"] as? [NSNumber], transform.count == 16
+            else { return nil }
+
+            let f = transform.map { $0.floatValue }
+            let xDirXZ = SIMD2<Float>(f[0], f[2])
+            let axisLen = simd_length(xDirXZ)
+            guard axisLen > 0.001 else { return nil }
+
+            return HFloor(
+                center: SIMD3<Float>(center[0].floatValue, center[1].floatValue, center[2].floatValue),
+                widthX: extent[0].floatValue,
+                depthZ: extent[1].floatValue,
+                xDirXZ: xDirXZ / axisLen
+            )
+        }
+    }
+
 
     private func pruneStalePeers() {
         let cutoff = Date().addingTimeInterval(-peerTimeout)
@@ -185,7 +230,9 @@ class ARState: ObservableObject {
             self.pins = []
             self.peers = [:]
             self.walls = []
+            self.floors = []
             self.wallsByClient = [:]
+            self.floorsByClient = [:]
             self.distanceWalked = 0
             self.lastPosition = nil
         }

@@ -288,13 +288,14 @@ struct ContentView: View {
 
             // ── Full map overlay ─────────────────────────────────
             if showFullMap {
-                FullMapView(
+                FullMap3DView(
                     trajectory: arState.trajectory,
                     currentPos: SIMD2<Float>(arState.position.x, arState.position.z),
                     heading: arState.heading,
                     pins: arState.pins,
                     peers: arState.peers,
                     walls: arState.walls,
+                    floors: arState.floors,
                     accentColor: accentColor,
                     onClose: {
                         withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
@@ -686,6 +687,7 @@ class Coordinator: NSObject, ARSessionDelegate {
             ]
         }
         NetworkingManager.shared.sendPlanes(planesData)
+        ARState.shared.updateLocalPlanes(planesData)
     }
 
     // MARK: - Peer Avatars
