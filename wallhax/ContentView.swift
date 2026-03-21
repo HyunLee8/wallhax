@@ -470,6 +470,13 @@ struct ARViewContainer: UIViewRepresentable {
         )
 
         let configuration = ARWorldTrackingConfiguration()
+        
+        configuration.planeDetection = [.horizontal, .vertical]
+        if ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) {
+            configuration.sceneReconstruction = .mesh
+            arView.debugOptions.insert(.showSceneUnderstanding)
+        }
+        
         if let referenceImages = ARReferenceImage.referenceImages(inGroupNamed: "Origin Reference Images", bundle: nil) {
             configuration.detectionImages = referenceImages
         }

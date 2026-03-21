@@ -2,6 +2,7 @@
 
 import Foundation
 import ARKit
+import simd
 
 class NetworkingManager {
 
@@ -108,30 +109,33 @@ class NetworkingManager {
 
         guard frameCount % sendEveryN == 0 else { return }
 
+        // Extract all values from the frame immediately so ARKit can release it.
         let t = frame.camera.transform
-        let position = SIMD3<Float>(t.columns.3.x, t.columns.3.y, t.columns.3.z)
-
-        let matrix: [Float] = [
-            t.columns.0.x, t.columns.0.y, t.columns.0.z, t.columns.0.w,
-            t.columns.1.x, t.columns.1.y, t.columns.1.z, t.columns.1.w,
-            t.columns.2.x, t.columns.2.y, t.columns.2.z, t.columns.2.w,
-            t.columns.3.x, t.columns.3.y, t.columns.3.z, t.columns.3.w
-        ]
-
+        let timestamp = frame.timestamp
+        let trackingState = trackingStateString(frame.camera.trackingState)
         let originDetected = frame.anchors.contains(where: { $0 is ARImageAnchor })
 
-        let payload: [String: Any] = [
-            "client_id": clientId,
-            "timestamp": frame.timestamp,
-            "position": [position.x, position.y, position.z],
-            "transform": matrix,
-            "origin_locked": originDetected,
-            "tracking_state": trackingStateString(frame.camera.trackingState)
-        ]
-
-        if let jsonData = try? JSONSerialization.data(withJSONObject: payload),
-           let jsonString = String(data: jsonData, encoding: .utf8) {
-            sendUDP(jsonString)
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self else { return }
+            let position = SIMD3<Float>(t.columns.3.x, t.columns.3.y, t.columns.3.z)
+            let matrix: [Float] = [
+                t.columns.0.x, t.columns.0.y, t.columns.0.z, t.columns.0.w,
+                t.columns.1.x, t.columns.1.y, t.columns.1.z, t.columns.1.w,
+                t.columns.2.x, t.columns.2.y, t.columns.2.z, t.columns.2.w,
+                t.columns.3.x, t.columns.3.y, t.columns.3.z, t.columns.3.w
+            ]
+            let payload: [String: Any] = [
+                "client_id": self.clientId,
+                "timestamp": timestamp,
+                "position": [position.x, position.y, position.z],
+                "transform": matrix,
+                "origin_locked": originDetected,
+                "tracking_state": trackingState
+            ]
+            if let jsonData = try? JSONSerialization.data(withJSONObject: payload),
+               let jsonString = String(data: jsonData, encoding: .utf8) {
+                self.sendUDP(jsonString)
+            }
         }
     }
 
