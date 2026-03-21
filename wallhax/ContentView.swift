@@ -583,6 +583,8 @@ class Coordinator: NSObject, ARSessionDelegate {
     var peerCylinders: [String: SCNNode] = [:]
     var pinAnchors: [UUID: AnchorEntity] = [:]
     var pinBobEntities: [UUID: (entity: Entity, phase: Float)] = [:]
+    var pinDistanceNodes: [UUID: SCNNode] = [:]
+    var distanceFrameCounter: Int = 0
     var subscriptions: [Any] = []
     private var planeAnchors: [UUID: ARPlaneAnchor] = [:]
     private var planeFrameCounter = 0
@@ -749,151 +751,98 @@ class Coordinator: NSObject, ARSessionDelegate {
     func addPinToScene(_ pin: MapPin, color: UIColor) {
         guard let arView = arView else { return }
 
+        let pillarH: Float = 3.0
+        let white = UIColor.white
         let anchor = AnchorEntity(world: pin.position)
 
-        let pinRoot = Entity()
-        pinRoot.position = [0, 0.65, 0]
+        // Light pillar — layered concentric cylinders, bright core fading outward
+        let layers: [(radius: Float, alpha: Float)] = [
+            (0.008, 1.00),   // bright core
+            (0.022, 0.55),
+            (0.055, 0.22),
+            (0.110, 0.09),
+            (0.200, 0.03),
+        ]
+        for layer in layers {
+            let e = ModelEntity(
+                mesh: .generateCylinder(height: pillarH, radius: layer.radius),
+                materials: [UnlitMaterial(color: white.withAlphaComponent(CGFloat(layer.alpha)))]
+            )
+            e.position = [0, pillarH / 2, 0]
+            anchor.addChild(e)
+        }
 
-        let pinBob = Entity()
+        // Ground bloom — soft bright disc at base
+        let groundLayers: [(radius: Float, alpha: Float)] = [
+            (0.06,  0.90),
+            (0.14,  0.40),
+            (0.28,  0.15),
+            (0.50,  0.05),
+        ]
+        for g in groundLayers {
+            let e = ModelEntity(
+                mesh: .generateCylinder(height: 0.003, radius: g.radius),
+                materials: [UnlitMaterial(color: white.withAlphaComponent(CGFloat(g.alpha)))]
+            )
+            e.position = [0, 0.0015, 0]
+            anchor.addChild(e)
+        }
 
-        let head = makeHead(for: pin.label, color: color)
-        let stem = makeStem(color: color)
-        pinBob.addChild(head)
-        pinBob.addChild(stem)
-        pinRoot.addChild(pinBob)
-        anchor.addChild(pinRoot)
         arView.scene.addAnchor(anchor)
         pinAnchors[pin.id] = anchor
 
-        let pinId = pin.id
-        let phase = Float(abs(pin.id.hashValue) % 1000) / 1000.0 * 2 * Float.pi
-
-        // 1. Drop from above
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
-            pinRoot.move(to: Transform(translation: .zero),
-                         relativeTo: anchor,
-                         duration: 0.48,
-                         timingFunction: .easeIn)
+        // Grow from ground
+        anchor.scale = [1, 0.001, 1]
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            anchor.move(to: Transform(scale: .one), relativeTo: nil,
+                        duration: 0.6, timingFunction: .easeOut)
         }
 
-        // 2. Squish–bounce on landing
-        let headRestRotation = head.transform.rotation
-        let headRestTranslation = head.position
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.46) {
-            head.move(to: Transform(scale: SIMD3(1.35, 0.52, 1.35),
-                                    rotation: headRestRotation,
-                                    translation: headRestTranslation),
-                      relativeTo: pinBob, duration: 0.09, timingFunction: .easeOut)
-
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.09) {
-                head.move(to: Transform(scale: SIMD3(0.86, 1.24, 0.86),
-                                        rotation: headRestRotation,
-                                        translation: headRestTranslation),
-                          relativeTo: pinBob, duration: 0.11, timingFunction: .easeOut)
-
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.11) {
-                    head.move(to: Transform(scale: .one,
-                                            rotation: headRestRotation,
-                                            translation: headRestTranslation),
-                              relativeTo: pinBob, duration: 0.13, timingFunction: .easeInOut)
-
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) {
-                        self.pinBobEntities[pinId] = (entity: pinBob, phase: phase)
-                    }
-                }
-            }
-        }
+        addPinDistanceLabel(pin: pin, color: white)
     }
 
-    // MARK: - Pin Head Shapes
+    private func addPinDistanceLabel(pin: MapPin, color: UIColor) {
+        guard let scene = scnView?.scene else { return }
 
-    private func makeHead(for label: String, color: UIColor) -> ModelEntity {
-        var mat = SimpleMaterial(color: color, isMetallic: true)
-        mat.roughness = .float(0.18)
-        let l = label.lowercased()
+        let textGeom = SCNText(string: pin.label + "\n– m", extrusionDepth: 0)
+        textGeom.font = UIFont.systemFont(ofSize: 0.22, weight: .bold)
+        textGeom.flatness = 0.005
+        textGeom.alignmentMode = CATextLayerAlignmentMode.center.rawValue
+        let mat = SCNMaterial()
+        mat.diffuse.contents = UIColor.white
+        mat.emission.contents = color
+        mat.isDoubleSided = true
+        textGeom.materials = [mat]
 
-        if l == "objective" || l == "victim" {
-            let e = ModelEntity(mesh: .generateSphere(radius: 0.048), materials: [mat])
-            e.position = [0, 0.048, 0]
-            return e
-        }
-        if l == "command" {
-            let e = ModelEntity(mesh: .generateBox(size: SIMD3<Float>(0.056, 0.056, 0.056)),
-                                materials: [mat])
-            e.transform = Transform(scale: .one,
-                                    rotation: simd_quatf(angle: .pi / 4, axis: [0, 1, 0]),
-                                    translation: [0, 0.028, 0])
-            return e
-        }
-        if l == "threat" || l == "fire" {
-            let e = ModelEntity(mesh: .generateBox(size: SIMD3<Float>(0.046, 0.046, 0.046)),
-                                materials: [mat])
-            e.transform = Transform(scale: .one,
-                                    rotation: simd_quatf(angle: .pi / 4, axis: [0, 1, 0]),
-                                    translation: [0, 0.023, 0])
-            return e
-        }
-        if l == "hazard" {
-            let e = ModelEntity(mesh: .generateBox(size: SIMD3<Float>(0.038, 0.038, 0.038)),
-                                materials: [mat])
-            e.position = [0, 0.019, 0]
-            return e
-        }
-        if l == "rally" || l == "clear" || l == "hydrant" {
-            let e = ModelEntity(mesh: .generateSphere(radius: 0.032), materials: [mat])
-            e.position = [0, 0.032, 0]
-            return e
-        }
-        if l == "entry" || l == "found" {
-            let e = ModelEntity(
-                mesh: .generateBox(width: 0.065, height: 0.013, depth: 0.065),
-                materials: [mat])
-            e.position = [0, 0.0065, 0]
-            return e
-        }
-        if l == "cover" || l == "exit" {
-            let e = ModelEntity(
-                mesh: .generateBox(width: 0.065, height: 0.013, depth: 0.065),
-                materials: [mat])
-            e.transform = Transform(scale: .one,
-                                    rotation: simd_quatf(angle: .pi / 4, axis: [0, 1, 0]),
-                                    translation: [0, 0.0065, 0])
-            return e
-        }
-        if l == "checkpoint" {
-            let e = ModelEntity(
-                mesh: .generateBox(width: 0.014, height: 0.068, depth: 0.014),
-                materials: [mat])
-            e.position = [0, 0.034, 0]
-            return e
-        }
-        if l == "observation" || l == "medical" {
-            let e = ModelEntity(mesh: .generateSphere(radius: 0.024), materials: [mat])
-            e.position = [0, 0.024, 0]
-            return e
-        }
-        let e = ModelEntity(mesh: .generateSphere(radius: 0.032), materials: [mat])
-        e.position = [0, 0.032, 0]
-        return e
+        let node = SCNNode(geometry: textGeom)
+        let (minB, maxB) = node.boundingBox
+        node.pivot = SCNMatrix4MakeTranslation((maxB.x - minB.x) / 2, 0, 0)
+
+        let billboard = SCNBillboardConstraint()
+        billboard.freeAxes = .all
+        node.constraints = [billboard]
+        node.position = SCNVector3(pin.position.x, pin.position.y + 3.3, pin.position.z)
+
+        scene.rootNode.addChildNode(node)
+        pinDistanceNodes[pin.id] = node
     }
 
-    private func makeStem(color: UIColor) -> ModelEntity {
-        var mat = SimpleMaterial(color: color.withAlphaComponent(0.55), isMetallic: false)
-        mat.roughness = .float(0.6)
-        let e = ModelEntity(
-            mesh: .generateBox(width: 0.005, height: 0.09, depth: 0.005),
-            materials: [mat])
-        e.position = [0, -0.045, 0]
-        return e
-    }
-
-    // MARK: - Idle Bob Animation
+    // MARK: - Idle Bob Animation + Distance Updates
 
     func updatePinBobbing() {
-        let time = Float(CACurrentMediaTime())
-        for item in pinBobEntities.values {
-            item.entity.position.y = sin(time * 1.8 + item.phase) * 0.008
+        distanceFrameCounter += 1
+        guard distanceFrameCounter % 30 == 0 else { return }
+
+        let cam = ARState.shared.position
+        for pin in ARState.shared.pins {
+            guard let node = pinDistanceNodes[pin.id],
+                  let textGeom = node.geometry as? SCNText else { continue }
+            let dx = pin.position.x - cam.x
+            let dy = pin.position.y - cam.y
+            let dz = pin.position.z - cam.z
+            let dist = sqrt(dx*dx + dy*dy + dz*dz)
+            let distStr = dist < 10 ? String(format: "%.1f m", dist) : String(format: "%.0f m", dist)
+            textGeom.string = pin.label + "\n" + distStr
         }
     }
 }

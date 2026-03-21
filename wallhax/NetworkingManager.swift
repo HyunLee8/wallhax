@@ -11,7 +11,11 @@ class NetworkingManager {
     let clientId = UUID().uuidString
 
     // Set to override broadcast discovery with a fixed server IP
-    private let staticServerIP: String? = "172.25.138.15"
+    #if DEBUG
+    private let staticServerIP: String? = "172.25.146.41"  // local dev Mac
+    #else
+    private let staticServerIP: String? = "172.25.138.15"  // ops Mac
+    #endif
 
     private var udpSocket: Int32 = -1
     private var serverAddr: sockaddr_in
@@ -178,7 +182,8 @@ class NetworkingManager {
                     return
                 }
 
-                var files: [(relativePath: String, data: Data)] = []
+                // Collect file URLs without loading data into memory
+                var fileURLs: [(relativePath: String, url: URL)] = []
                 while let fileURL = enumerator.nextObject() as? URL {
                     guard fileURL.isFileURL, !fileURL.hasDirectoryPath else { continue }
                     let filePath = fileURL.standardizedFileURL.path
@@ -186,23 +191,23 @@ class NetworkingManager {
                     let relativePath = filePath.hasPrefix(basePath)
                         ? String(filePath.dropFirst(basePath.count))
                         : fileURL.lastPathComponent
-                    if let data = try? Data(contentsOf: fileURL) {
-                        files.append((relativePath: relativePath, data: data))
-                    }
+                    fileURLs.append((relativePath: relativePath, url: fileURL))
                 }
 
                 try Self.sendPacket(sock: sock, data: NetworkingManager.shared.missionId.data(using: .utf8)!)
                 try Self.sendPacket(sock: sock, data: NetworkingManager.shared.clientId.data(using: .utf8)!)
-                try Self.sendPacket(sock: sock, data: "\(files.count)".data(using: .utf8)!)
+                try Self.sendPacket(sock: sock, data: "\(fileURLs.count)".data(using: .utf8)!)
 
-                for (i, file) in files.enumerated() {
-                    DispatchQueue.main.async { onStatusUpdate(false, false, "Sending \(i + 1)/\(files.count)...") }
+                // Stream one file at a time — never hold more than one in memory
+                for (i, file) in fileURLs.enumerated() {
+                    DispatchQueue.main.async { onStatusUpdate(false, false, "Sending \(i + 1)/\(fileURLs.count)...") }
+                    guard let data = try? Data(contentsOf: file.url) else { continue }
                     try Self.sendPacket(sock: sock, data: file.relativePath.data(using: .utf8)!)
-                    try Self.sendPacket(sock: sock, data: file.data)
+                    try Self.sendPacket(sock: sock, data: data)
                 }
 
                 close(sock)
-                DispatchQueue.main.async { onStatusUpdate(true, true, "Sent \(files.count) files ✓") }
+                DispatchQueue.main.async { onStatusUpdate(true, true, "Sent \(fileURLs.count) files ✓") }
 
             } catch {
                 DispatchQueue.main.async { onStatusUpdate(true, false, "Send failed: \(error.localizedDescription)") }
