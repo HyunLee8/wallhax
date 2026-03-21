@@ -129,18 +129,30 @@ struct MapCanvas: View {
             }
 
             // Pins
-            let pinSize: CGFloat = showLabels ? 10 : 6
+            let pinIconSize: CGFloat = showLabels ? 20 : 11
             for pin in pins {
                 let sp = toScreen(pin.position2D)
-                let pinRect = CGRect(x: sp.x - pinSize/2, y: sp.y - pinSize/2, width: pinSize, height: pinSize)
-                context.fill(Path(ellipseIn: pinRect), with: .color(accentColor))
-                context.stroke(Path(ellipseIn: pinRect), with: .color(.white), lineWidth: 1.5)
+
+                let pinSym = Text(Image(systemName: "mappin.fill"))
+                    .font(.system(size: pinIconSize))
+                    .foregroundColor(accentColor)
+                context.draw(pinSym, at: sp, anchor: .bottom)
 
                 if showLabels {
-                    let text = Text(pin.label)
-                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    let labelY = sp.y - pinIconSize - 14
+                    let labelWidth = CGFloat(max(pin.label.count * 7, 44))
+                    let pill = Path(roundedRect: CGRect(x: sp.x - labelWidth / 2,
+                                                        y: labelY - 9,
+                                                        width: labelWidth,
+                                                        height: 17),
+                                    cornerRadius: 5)
+                    context.fill(pill, with: .color(.black.opacity(0.68)))
+                    context.stroke(pill, with: .color(.white.opacity(0.18)), lineWidth: 0.5)
+
+                    let labelText = Text(pin.label)
+                        .font(.system(size: 10, weight: .semibold, design: .rounded))
                         .foregroundColor(.white)
-                    context.draw(text, at: CGPoint(x: sp.x, y: sp.y - pinSize - 8))
+                    context.draw(labelText, at: CGPoint(x: sp.x, y: labelY))
                 }
             }
 

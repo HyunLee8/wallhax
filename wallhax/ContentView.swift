@@ -246,7 +246,8 @@ struct ContentView: View {
                 PinWheelOverlay(
                     labels: useCase.pinLabels,
                     accentColor: accentColor,
-                    selectedIndex: selectedPinIndex
+                    selectedIndex: selectedPinIndex,
+                    useCaseId: useCase.id
                 )
                 .allowsHitTesting(false)
                 .ignoresSafeArea()

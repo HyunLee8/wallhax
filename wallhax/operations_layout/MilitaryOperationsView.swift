@@ -52,7 +52,8 @@ struct MilitaryOperationsView: View {
                     PinWheelOverlay(
                         labels: useCase.pinLabels,
                         accentColor: hue,
-                        selectedIndex: selectedPinIndex
+                        selectedIndex: selectedPinIndex,
+                        useCaseId: useCase.id
                     )
                     .allowsHitTesting(false)
                     .ignoresSafeArea()
