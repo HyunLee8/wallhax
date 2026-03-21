@@ -1,40 +1,35 @@
-//
-//  ContentView.swift
-//  wallhax
-//
-//  Created by Isaac Lee on 3/21/26.
-//
-
 import SwiftUI
 import RealityKit
+import ARKit
 
-struct ContentView : View {
-
+struct ContentView: View {
     var body: some View {
-        RealityView { content in
-
-            // Create a cube model
-            let model = Entity()
-            let mesh = MeshResource.generateBox(size: 0.1, cornerRadius: 0.005)
-            let material = SimpleMaterial(color: .gray, roughness: 0.15, isMetallic: true)
-            model.components.set(ModelComponent(mesh: mesh, materials: [material]))
-            model.position = [0, 0.05, 0]
-
-            // Create horizontal plane anchor for the content
-            let anchor = AnchorEntity(.plane(.horizontal, classification: .any, minimumBounds: SIMD2<Float>(0.2, 0.2)))
-            anchor.addChild(model)
-
-            // Add the horizontal plane anchor to the scene
-            content.add(anchor)
-
-            content.camera = .spatialTracking
-
+        ARViewContainer()
+                    .ignoresSafeArea()
+            }
         }
-        .edgesIgnoringSafeArea(.all)
+
+struct ARViewContainer: UIViewRepresentable {
+    func makeUIView(context: Context) -> ARView {
+        let arView = ARView(frame: .zero)
+
+        let config = ARWorldTrackingConfiguration()
+        config.sceneReconstruction = .meshWithClassification
+        config.frameSemantics = .sceneDepth
+
+        arView.session.delegate = context.coordinator
+        arView.session.run(config)
+        return arView
     }
 
+    func updateUIView(_ uiView: ARView, context: Context) {}
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
 }
 
-#Preview {
-    ContentView()
-}
+class Coordinator: NSObject, ARSessionDelegate {
+    func session(_ session: ARSession, didUpdate frame: ARFrame) {
+        let pos = frame.camera.transform.columns.3
+        print("📍 pos: \(pos.x), \(pos.y), \(pos.z)")
+    }
+}Ï
