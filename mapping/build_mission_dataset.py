@@ -114,6 +114,35 @@ def main():
         print("Failed to find any valid image/XMP pairs.")
         return
 
+    # Look for points.json and write sparse_pc.ply to hold the point cloud
+    points_found = False
+    ply_filename = "sparse_pc.ply"
+    for client_id in client_dirs:
+        points_path = os.path.join(data_dir, client_id, "points.json")
+        if os.path.exists(points_path):
+            print(f"Found points.json for {client_id}. Converting to PLY...")
+            try:
+                with open(points_path, 'r') as f:
+                    raw_points = json.load(f)
+                
+                ply_out_path = os.path.join(out_dir, ply_filename)
+                with open(ply_out_path, 'w') as ply_file:
+                    ply_file.write("ply\n")
+                    ply_file.write("format ascii 1.0\n")
+                    ply_file.write(f"element vertex {len(raw_points)}\n")
+                    ply_file.write("property float x\nproperty float y\nproperty float z\n")
+                    ply_file.write("property uchar red\nproperty uchar green\nproperty uchar blue\n")
+                    ply_file.write("end_header\n")
+                    
+                    for pt in raw_points:
+                        # Flip Y and Z axes to match OpenCV cameras
+                        ply_file.write(f"{pt[0]} {-pt[1]} {-pt[2]} 128 128 128\n")
+                        
+                points_found = True
+                break
+            except Exception as e:
+                print(f"Failed to parse points.json: {e}")
+
     transforms = {
         "w": global_intrinsics['w'],
         "h": global_intrinsics['h'],
@@ -125,11 +154,17 @@ def main():
         "frames": frames_data,
     }
 
+    if points_found:
+        transforms["ply_file_path"] = ply_filename
+
     json_out = os.path.join(out_dir, 'transforms.json')
     with open(json_out, 'w') as f:
         json.dump(transforms, f, indent=4)
 
     print(f"\n✅ Success! Merged {len(frames_data)} frames across {len(client_dirs)} clients.")
+    if points_found:
+        print(f"✅ Point cloud successfully exported to {ply_filename}.")
+
     print(f"Dataset ready at: {out_dir}")
     print(f"\nTo train, run:\n ns-train splatfacto --data {out_dir}")
 

@@ -27,6 +27,8 @@ class SnapshotManager {
     private var lastCaptureTime: TimeInterval = 0
     private var lastCapturePosition: SIMD3<Float>?
     private var lastCaptureRotation: simd_float3x3?
+
+    private var accumulatedPoints: [SIMD3<Float>] = []
     
     private var sessionDir: URL?
     
@@ -61,6 +63,16 @@ class SnapshotManager {
     func stopSession() {
         guard isCapturing else { return }
         isCapturing = false
+
+        if let sessionDir = sessionDir, !accumulatedPoints.isEmpty {
+            let pointsArray = accumulatedPoints.map { [$0.x, $0.y, $0.z] }
+            if let data = try? JSONSerialization.data(withJSONObject: pointsArray) {
+                let url = sessionDir.appendingPathComponent("points.json")
+                try? data.write(to: url)
+                print("[SnapshotManager] Saved \(accumulatedPoints.count) 3D points to points.json")
+            }
+        }
+
         print("[SnapshotManager] Session stopped. \(frameIndex) frames captured.")
     }
     
@@ -97,6 +109,12 @@ class SnapshotManager {
             // Swapped: ARKit reports landscape dimensions, we save portrait
             imageWidth = Int(imgRes.height)
             imageHeight = Int(imgRes.width)
+        }
+
+        if let rawFeatures = frame.rawFeaturePoints {
+            for point in rawFeatures.points {
+                accumulatedPoints.append(point)
+            }
         }
         
         // Convert pixel buffer to JPEG (ARKit delivers landscape-left, rotate to portrait)
