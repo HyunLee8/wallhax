@@ -214,13 +214,21 @@ struct MapCanvas: View {
             for pin in pins {
                 let sp = toScreen(pin.position2D)
 
-                let pinSym = Text(Image(systemName: "mappin.fill"))
-                    .font(.system(size: pinIconSize))
-                    .foregroundColor(accentColor)
-                context.draw(pinSym, at: sp, anchor: .bottom)
+                // Stem
+                let stemTop = CGPoint(x: sp.x, y: sp.y - pinIconSize)
+                var stem = Path()
+                stem.move(to: stemTop)
+                stem.addLine(to: sp)
+                context.stroke(stem, with: .color(accentColor.opacity(0.8)), lineWidth: showLabels ? 2 : 1.5)
+
+                // Head (filled circle)
+                let r = pinIconSize * 0.38
+                let headRect = CGRect(x: sp.x - r, y: sp.y - pinIconSize - r * 2, width: r * 2, height: r * 2)
+                context.fill(Path(ellipseIn: headRect), with: .color(accentColor))
 
                 if showLabels {
-                    let labelY = sp.y - pinIconSize - 14
+                    let headCenterY = sp.y - pinIconSize - pinIconSize * 0.38
+                    let labelY = headCenterY - pinIconSize * 0.38 - 10
                     let labelWidth = CGFloat(max(pin.label.count * 7, 44))
                     let pill = Path(roundedRect: CGRect(x: sp.x - labelWidth / 2,
                                                         y: labelY - 9,

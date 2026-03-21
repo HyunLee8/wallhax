@@ -11,36 +11,22 @@ struct PinWheelOverlay: View {
 
     private let wheelRadius: CGFloat = 112
 
-    private var center: CGPoint {
-        let s = UIScreen.main.bounds
-        return CGPoint(x: s.width / 2, y: s.height * 0.42)
-    }
-
     private var isMilitary: Bool    { useCaseId == "military" }
     private var isFirefighter: Bool { useCaseId == "firefighter" }
 
     private var itemWidth: CGFloat  { isMilitary ? 72 : isFirefighter ? 62 : 78 }
     private var itemHeight: CGFloat { isMilitary ? 50 : isFirefighter ? 62 : 44 }
 
+    private var center: CGPoint {
+        let s = UIScreen.main.bounds
+        return CGPoint(x: s.width / 2, y: s.height * 0.42)
+    }
+
     var body: some View {
         ZStack {
             // Backdrop
             Color.black.opacity(isMilitary ? 0.60 : 0.40)
                 .ignoresSafeArea()
-
-            // Military: scan-line texture
-            if isMilitary {
-                Canvas { context, size in
-                    for y in stride(from: CGFloat(0), to: size.height, by: 4) {
-                        var line = Path()
-                        line.move(to: CGPoint(x: 0, y: y))
-                        line.addLine(to: CGPoint(x: size.width, y: y))
-                        context.stroke(line, with: .color(.white.opacity(0.018)), lineWidth: 1)
-                    }
-                }
-                .ignoresSafeArea()
-                .allowsHitTesting(false)
-            }
 
             // Military: radial connector lines
             if isMilitary {
@@ -92,6 +78,7 @@ struct PinWheelOverlay: View {
                 .animation(.spring(response: 0.2), value: selectedIndex)
                 .position(center)
         }
+        .drawingGroup()
     }
 
     // MARK: - Per-mode item

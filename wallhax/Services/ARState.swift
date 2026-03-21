@@ -41,6 +41,7 @@ class ARState: ObservableObject {
     @Published var floors: [HFloor] = []
 
     private var lastPosition: SIMD3<Float>?
+    private var lastTrajectoryPosition: SIMD3<Float>?
     private var pruneTimer: Timer?
     private var wallRefreshTimer: Timer?
     private var wallsByClient: [String: [Wall3D]] = [:]
@@ -159,10 +160,14 @@ class ARState: ObservableObject {
             self.position = pos
             self.heading = yaw
             self.featureCount = frame.rawFeaturePoints?.points.count ?? 0
-            self.trajectory.append(t)
 
-            if self.trajectory.count > 3000 {
-                self.trajectory = Array(self.trajectory.suffix(2000))
+            let shouldAppend = self.lastTrajectoryPosition.map { simd_distance(pos, $0) >= 0.05 } ?? true
+            if shouldAppend {
+                self.trajectory.append(t)
+                self.lastTrajectoryPosition = pos
+                if self.trajectory.count > 3000 {
+                    self.trajectory = Array(self.trajectory.suffix(2000))
+                }
             }
 
             switch frame.camera.trackingState {
@@ -238,6 +243,7 @@ class ARState: ObservableObject {
             self.floorsByClient = [:]
             self.distanceWalked = 0
             self.lastPosition = nil
+            self.lastTrajectoryPosition = nil
         }
     }
 }

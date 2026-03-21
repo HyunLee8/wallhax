@@ -274,17 +274,16 @@ struct ContentView: View {
             }
 
             // ── Pin wheel overlay ────────────────────────────────
-            if showPinWheel {
-                PinWheelOverlay(
-                    labels: useCase.pinLabels,
-                    accentColor: accentColor,
-                    selectedIndex: selectedPinIndex,
-                    useCaseId: useCase.id
-                )
-                .allowsHitTesting(false)
-                .ignoresSafeArea()
-                .zIndex(15)
-            }
+            PinWheelOverlay(
+                labels: useCase.pinLabels,
+                accentColor: accentColor,
+                selectedIndex: selectedPinIndex,
+                useCaseId: useCase.id
+            )
+            .allowsHitTesting(false)
+            .ignoresSafeArea()
+            .opacity(showPinWheel ? 1 : 0)
+            .zIndex(15)
 
             // ── Full map overlay ─────────────────────────────────
             if showFullMap {
@@ -383,40 +382,37 @@ struct ContentView: View {
                     return
                 }
 
-                var files: [(relativePath: String, data: Data)] = []
+                var fileEntries: [(relativePath: String, url: URL)] = []
+                let basePath = sessionURL.standardizedFileURL.path + "/"
                 while let fileURL = enumerator.nextObject() as? URL {
                     guard fileURL.isFileURL, !fileURL.hasDirectoryPath else { continue }
                     let filePath = fileURL.standardizedFileURL.path
-                    let basePath = sessionURL.standardizedFileURL.path + "/"
                     let relativePath = filePath.hasPrefix(basePath)
                         ? String(filePath.dropFirst(basePath.count))
                         : fileURL.lastPathComponent
-                    if let data = try? Data(contentsOf: fileURL) {
-                        files.append((relativePath: relativePath, data: data))
-                    }
+                    fileEntries.append((relativePath: relativePath, url: fileURL))
                 }
 
                 let sock = try Self.createTCPSocket(host: serverIP, port: serverPort)
 
                 try Self.sendPacket(sock: sock, data: NetworkingManager.shared.missionId.data(using: .utf8)!)
                 try Self.sendPacket(sock: sock, data: NetworkingManager.shared.clientId.data(using: .utf8)!)
+                try Self.sendPacket(sock: sock, data: "\(fileEntries.count)".data(using: .utf8)!)
 
-                let countStr = "\(files.count)"
-                try Self.sendPacket(sock: sock, data: countStr.data(using: .utf8)!)
-
-                for (i, file) in files.enumerated() {
+                for (i, file) in fileEntries.enumerated() {
                     DispatchQueue.main.async {
-                        sendStatus = "Sending \(i + 1)/\(files.count)..."
+                        sendStatus = "Sending \(i + 1)/\(fileEntries.count)..."
                     }
+                    guard let data = try? Data(contentsOf: file.url) else { continue }
                     try Self.sendPacket(sock: sock, data: file.relativePath.data(using: .utf8)!)
-                    try Self.sendPacket(sock: sock, data: file.data)
+                    try Self.sendPacket(sock: sock, data: data)
                 }
 
                 close(sock)
                 try? FileManager.default.removeItem(at: sessionURL)
 
                 DispatchQueue.main.async {
-                    sendStatus = "Sent \(files.count) files ✓"
+                    sendStatus = "Sent \(fileEntries.count) files ✓"
                     isSending = false
                     hasRecording = false
                 }

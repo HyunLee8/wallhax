@@ -50,17 +50,16 @@ struct MilitaryOperationsView: View {
                     portraitLayout
                 }
 
-                if showPinWheel {
-                    PinWheelOverlay(
-                        labels: useCase.pinLabels,
-                        accentColor: hue,
-                        selectedIndex: selectedPinIndex,
-                        useCaseId: useCase.id
-                    )
-                    .allowsHitTesting(false)
-                    .ignoresSafeArea()
-                    .zIndex(15)
-                }
+                PinWheelOverlay(
+                    labels: useCase.pinLabels,
+                    accentColor: hue,
+                    selectedIndex: selectedPinIndex,
+                    useCaseId: useCase.id
+                )
+                .allowsHitTesting(false)
+                .ignoresSafeArea()
+                .opacity(showPinWheel ? 1 : 0)
+                .zIndex(15)
 
                 if showFullMap {
 //                    FullMapView(
