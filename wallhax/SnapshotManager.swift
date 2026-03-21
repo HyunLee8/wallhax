@@ -16,7 +16,7 @@ class SnapshotManager {
     static let shared = SnapshotManager()
     
     // ── Config ─────────────────────────────────────────────────
-    private let captureInterval: TimeInterval = 0.5
+    private let captureInterval: TimeInterval = 0.1
     private let jpegQuality: CGFloat = 0.95
     private let minMovement: Float = 0.05   // 5cm
     private let minRotation: Float = 0.087  // ~5 degrees
