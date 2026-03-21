@@ -92,7 +92,7 @@ private struct GestureCapture: UIViewRepresentable {
 // MARK: - Map Canvas
 
 struct MapCanvas: View {
-    let trajectory: [SIMD2<Float>]
+    let trajectory: [simd_float4x4]
     let currentPos: SIMD2<Float>
     let heading: Float
     let pins: [MapPin]
@@ -114,10 +114,10 @@ struct MapCanvas: View {
 
             let (anchorXFinal, anchorYFinal): (Float, Float) = {
                 if !centerOnUser && !trajectory.isEmpty {
-                    let minX = trajectory.map { $0.x }.min() ?? 0
-                    let maxX = trajectory.map { $0.x }.max() ?? 0
-                    let minY = trajectory.map { $0.y }.min() ?? 0
-                    let maxY = trajectory.map { $0.y }.max() ?? 0
+                    let minX = trajectory.map { $0.columns.3.x }.min() ?? 0
+                    let maxX = trajectory.map { $0.columns.3.x }.max() ?? 0
+                    let minY = trajectory.map { $0.columns.3.z }.min() ?? 0
+                    let maxY = trajectory.map { $0.columns.3.z }.max() ?? 0
                     return ((minX + maxX) / 2, (minY + maxY) / 2)
                 }
                 return (anchorX, anchorY)
@@ -185,23 +185,24 @@ struct MapCanvas: View {
                 let traj = peer.trajectory
                 if traj.count >= 2 {
                     var path = Path()
-                    for (i, pt) in traj.enumerated() {
-                        let sp = toScreen(pt)
+                    for (i, t) in traj.enumerated() {
+                        let sp = toScreen(SIMD2(t.columns.3.x, t.columns.3.z))
                         if i == 0 { path.move(to: sp) }
                         else { path.addLine(to: sp) }
                     }
                     context.stroke(path, with: .color(color.opacity(0.5)), lineWidth: showLabels ? 2.0 : 1.2)
                 }
-                if let lastPt = traj.last {
-                    drawTriangle(at: toScreen(lastPt), heading: peer.heading, size: peerTriSize, color: color)
+                if let last = traj.last {
+                    drawTriangle(at: toScreen(SIMD2(last.columns.3.x, last.columns.3.z)),
+                                 heading: peer.heading, size: peerTriSize, color: color)
                 }
             }
 
             // Local trajectory
             if trajectory.count >= 2 {
                 var path = Path()
-                for (i, pt) in trajectory.enumerated() {
-                    let sp = toScreen(pt)
+                for (i, t) in trajectory.enumerated() {
+                    let sp = toScreen(SIMD2(t.columns.3.x, t.columns.3.z))
                     if i == 0 { path.move(to: sp) }
                     else { path.addLine(to: sp) }
                 }
@@ -248,7 +249,7 @@ struct MapCanvas: View {
 // MARK: - Minimap
 
 struct MinimapView: View {
-    let trajectory: [SIMD2<Float>]
+    let trajectory: [simd_float4x4]
     let currentPos: SIMD2<Float>
     let heading: Float
     let pins: [MapPin]
@@ -296,7 +297,7 @@ struct MinimapView: View {
 // MARK: - Full Map
 
 struct FullMapView: View {
-    let trajectory: [SIMD2<Float>]
+    let trajectory: [simd_float4x4]
     let currentPos: SIMD2<Float>
     let heading: Float
     let pins: [MapPin]
@@ -458,14 +459,14 @@ struct FullMapView: View {
 
 // MARK: - 3D Helpers
 
-private func makePointerNode(at pos: SIMD2<Float>, heading: Float, color: UIColor) -> SCNNode {
+private func makePointerNode(at pos: SIMD3<Float>, heading: Float, color: UIColor) -> SCNNode {
     let cone = SCNCone(topRadius: 0, bottomRadius: 0.22, height: 0.55)
     let mat = SCNMaterial()
     mat.diffuse.contents = color
     mat.emission.contents = color.withAlphaComponent(0.35)
     cone.materials = [mat]
     let node = SCNNode(geometry: cone)
-    node.position = SCNVector3(pos.x, 0.28, pos.y)
+    node.position = SCNVector3(pos.x, pos.y + 0.28, pos.z)
     node.eulerAngles = SCNVector3(Float.pi / 2, heading, 0)
     return node
 }
@@ -483,12 +484,12 @@ private final class Map3DCoordinator: NSObject {
     private let peersNode  = SCNNode()
     private let pinsNode   = SCNNode()
 
-    private var lastWallCount       = -1
-    private var lastFloorCount      = -1
-    private var lastTrajectoryCount = -1
-    private var lastPeerIds         = Set<String>()
-    private var lastPinCount        = -1
-    private var didFitCamera        = false
+    private var lastWallCount         = -1
+    private var lastFloorCount        = -1
+    private var lastTrajectoryCount   = -1
+    private var lastPeerTrajCounts    = [String: Int]()
+    private var lastPinCount          = -1
+    private var didFitCamera          = false
 
     override init() {
         super.init()
@@ -497,7 +498,7 @@ private final class Map3DCoordinator: NSObject {
         }
     }
 
-    func update(trajectory: [SIMD2<Float>], currentPos: SIMD2<Float>, heading: Float,
+    func update(trajectory: [simd_float4x4], currentPos: SIMD3<Float>, heading: Float,
                 walls: [Wall3D], floors: [HFloor], peers: [String: PeerMapState],
                 pins: [MapPin], accentColor: UIColor) {
         if walls.count != lastWallCount {
@@ -509,9 +510,12 @@ private final class Map3DCoordinator: NSObject {
         if trajectory.count != lastTrajectoryCount {
             rebuildPath(trajectory); lastTrajectoryCount = trajectory.count
         }
-        let peerIds = Set(peers.keys)
-        if peerIds != lastPeerIds {
-            rebuildPeers(peers); lastPeerIds = peerIds
+        let needsPeerRebuild = peers.contains { id, state in
+            lastPeerTrajCounts[id] != state.trajectory.count
+        } || lastPeerTrajCounts.keys.contains { !peers.keys.contains($0) }
+        if needsPeerRebuild {
+            rebuildPeers(peers)
+            lastPeerTrajCounts = peers.mapValues { $0.trajectory.count }
         }
         if pins.count != lastPinCount {
             rebuildPins(pins, accentColor: accentColor); lastPinCount = pins.count
@@ -560,30 +564,37 @@ private final class Map3DCoordinator: NSObject {
         }
     }
 
-    private func rebuildPath(_ trajectory: [SIMD2<Float>]) {
-        pathNode.childNodes.forEach { $0.removeFromParentNode() }
-
-        // SCNLine's normalized() produces NaN for near-zero segments, so deduplicate
+    /// Builds a deduplicated SCNLineNode from a transform trajectory using full XYZ positions.
+    /// SCNLine's normalize() produces NaN for near-zero segments, so consecutive points
+    /// closer than 1 cm are skipped before the geometry is created.
+    private func makeTrailNode(trajectory: [simd_float4x4], color: UIColor) -> SCNLineNode? {
         var points: [SCNVector3] = []
-        for p in trajectory {
-            let v = SCNVector3(p.x, 0.05, p.y)
+        for t in trajectory {
+            let v = SCNVector3(t.columns.3.x, t.columns.3.y, t.columns.3.z)
             if let last = points.last {
-                let dx = v.x - last.x, dz = v.z - last.z
-                guard dx * dx + dz * dz > 0.0001 else { continue }
+                let dx = v.x - last.x, dy = v.y - last.y, dz = v.z - last.z
+                guard dx * dx + dy * dy + dz * dz > 0.0001 else { continue }
             }
             points.append(v)
         }
-        guard points.count >= 2 else { return }
+        guard points.count >= 2 else { return nil }
 
         let mat = SCNMaterial()
-        mat.diffuse.contents = UIColor.white.withAlphaComponent(0.8)
+        mat.diffuse.contents = color
         mat.lightingModel = .constant
         let lineNode = SCNLineNode(with: points, radius: Float(TRAIL_THICKNESS) / 2, edges: 12, maxTurning: 4)
         lineNode.lineMaterials = [mat]
-        pathNode.addChildNode(lineNode)
+        return lineNode
     }
 
-    private func rebuildSelf(currentPos: SIMD2<Float>, heading: Float) {
+    private func rebuildPath(_ trajectory: [simd_float4x4]) {
+        pathNode.childNodes.forEach { $0.removeFromParentNode() }
+        if let node = makeTrailNode(trajectory: trajectory, color: .white.withAlphaComponent(0.8)) {
+            pathNode.addChildNode(node)
+        }
+    }
+
+    private func rebuildSelf(currentPos: SIMD3<Float>, heading: Float) {
         selfNode.childNodes.forEach { $0.removeFromParentNode() }
         selfNode.addChildNode(makePointerNode(at: currentPos, heading: heading, color: .white))
     }
@@ -591,8 +602,18 @@ private final class Map3DCoordinator: NSObject {
     private func rebuildPeers(_ peers: [String: PeerMapState]) {
         peersNode.childNodes.forEach { $0.removeFromParentNode() }
         for (peerId, state) in peers {
-            guard let pos = state.trajectory.last else { continue }
-            peersNode.addChildNode(makePointerNode(at: pos, heading: state.heading, color: peerColorUI(for: peerId)))
+            let color = peerColorUI(for: peerId)
+
+            // Trail
+            if let node = makeTrailNode(trajectory: state.trajectory, color: color.withAlphaComponent(0.6)) {
+                peersNode.addChildNode(node)
+            }
+
+            // Pointer cone
+            if let last = state.trajectory.last {
+                let pos = SIMD3<Float>(last.columns.3.x, last.columns.3.y, last.columns.3.z)
+                peersNode.addChildNode(makePointerNode(at: pos, heading: state.heading, color: color))
+            }
         }
     }
 
@@ -618,11 +639,11 @@ private final class Map3DCoordinator: NSObject {
         }
     }
 
-    func fitCamera(trajectory: [SIMD2<Float>], walls3D: [Wall3D]) {
+    func fitCamera(trajectory: [simd_float4x4], walls3D: [Wall3D]) {
         guard let camNode = scnView.pointOfView, !trajectory.isEmpty else { return }
 
-        var allX = trajectory.map { $0.x }
-        var allZ = trajectory.map { $0.y }
+        var allX = trajectory.map { $0.columns.3.x }
+        var allZ = trajectory.map { $0.columns.3.z }
         allX += walls3D.map { $0.center.x }
         allZ += walls3D.map { $0.center.z }
 
@@ -645,8 +666,8 @@ private final class Map3DCoordinator: NSObject {
 }
 
 private struct Map3DContainer: UIViewRepresentable {
-    let trajectory: [SIMD2<Float>]
-    let currentPos: SIMD2<Float>
+    let trajectory: [simd_float4x4]
+    let currentPos: SIMD3<Float>
     let heading: Float
     let walls: [Wall3D]
     let floors: [HFloor]
@@ -693,8 +714,8 @@ private struct Map3DContainer: UIViewRepresentable {
 }
 
 struct FullMap3DView: View {
-    let trajectory: [SIMD2<Float>]
-    let currentPos: SIMD2<Float>
+    let trajectory: [simd_float4x4]
+    let currentPos: SIMD3<Float>
     let heading: Float
     let pins: [MapPin]
     let peers: [String: PeerMapState]

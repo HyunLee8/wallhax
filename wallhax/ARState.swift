@@ -20,7 +20,7 @@ struct Wall3D {
 }
 
 struct PeerMapState {
-    var trajectory: [SIMD2<Float>]
+    var trajectory: [simd_float4x4]
     var heading: Float
     var lastSeen: Date
 }
@@ -32,7 +32,7 @@ class ARState: ObservableObject {
     @Published var heading: Float = 0
     @Published var trackingState: String = "initializing"
     @Published var featureCount: Int = 0
-    @Published var trajectory: [SIMD2<Float>] = []
+    @Published var trajectory: [simd_float4x4] = []
     @Published var pins: [MapPin] = []
     @Published var distanceWalked: Float = 0
     @Published var isRelayConnected: Bool = NetworkingManager.shared.serverDiscovered
@@ -159,7 +159,7 @@ class ARState: ObservableObject {
             self.position = pos
             self.heading = yaw
             self.featureCount = frame.rawFeaturePoints?.points.count ?? 0
-            self.trajectory.append(SIMD2<Float>(pos.x, pos.z))
+            self.trajectory.append(t)
 
             if self.trajectory.count > 3000 {
                 self.trajectory = Array(self.trajectory.suffix(2000))
@@ -201,17 +201,20 @@ class ARState: ObservableObject {
     }
 
     func updatePeer(_ peerId: String, transform: simd_float4x4) {
-        let pos = SIMD2<Float>(transform.columns.3.x, transform.columns.3.z)
+        let pos2D = SIMD2<Float>(transform.columns.3.x, transform.columns.3.z)
         let yaw = atan2(-transform.columns.2.x, -transform.columns.2.z)
         DispatchQueue.main.async {
             var state = self.peers[peerId] ?? PeerMapState(trajectory: [], heading: 0, lastSeen: Date())
             state.lastSeen = Date()
-            if let last = state.trajectory.last, simd_distance(pos, last) <= 0.01 {
-                state.heading = yaw
-                self.peers[peerId] = state
-                return
+            if let last = state.trajectory.last {
+                let lastPos2D = SIMD2<Float>(last.columns.3.x, last.columns.3.z)
+                if simd_distance(pos2D, lastPos2D) <= 0.01 {
+                    state.heading = yaw
+                    self.peers[peerId] = state
+                    return
+                }
             }
-            state.trajectory.append(pos)
+            state.trajectory.append(transform)
             if state.trajectory.count > 3000 {
                 state.trajectory = Array(state.trajectory.suffix(2000))
             }

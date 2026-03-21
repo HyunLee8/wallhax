@@ -81,11 +81,11 @@ struct MilitaryOperationsView: View {
 //                    .zIndex(10)
                     FullMap3DView(
                         trajectory: arState.trajectory,
-                        currentPos: SIMD2<Float>(arState.position.x, arState.position.z),
+                        currentPos: arState.position,
                         heading: arState.heading,
                         pins: arState.pins,
                         peers: arState.peers,
-                        walls: arState.walls as! [Wall3D],
+                        walls: arState.walls,
                         floors: arState.floors,
                         accentColor: hue,
                         onClose: {

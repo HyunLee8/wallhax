@@ -290,7 +290,7 @@ struct ContentView: View {
             if showFullMap {
                 FullMap3DView(
                     trajectory: arState.trajectory,
-                    currentPos: SIMD2<Float>(arState.position.x, arState.position.z),
+                    currentPos: arState.position,
                     heading: arState.heading,
                     pins: arState.pins,
                     peers: arState.peers,
