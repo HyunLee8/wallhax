@@ -164,18 +164,11 @@ struct ContentView: View {
                     Button(action: {
                         if isRecording {
                             isRecording = false
-                            let points = NetworkingManager.shared.stopCollection()
                             SnapshotManager.shared.stopSession()
-                            if let sessionPath = SnapshotManager.shared.sessionPath,
-                               let jsonData = try? JSONSerialization.data(withJSONObject: points) {
-                                let pointsURL = URL(fileURLWithPath: sessionPath).appendingPathComponent("points.json")
-                                try? jsonData.write(to: pointsURL)
-                            }
                             hasRecording = true
                             recordingStartTime = nil
                         } else {
                             SnapshotManager.shared.startSession()
-                            NetworkingManager.shared.startCollection()
                             isRecording = true
                             hasRecording = false
                             frameCount = 0
@@ -450,8 +443,8 @@ struct ARViewContainer: UIViewRepresentable {
 
         let coordinator = context.coordinator
 
-        NetworkingManager.shared.onPeersUpdated = { [weak coordinator] transforms in
-            coordinator?.updatePeers(transforms)
+        NetworkingManager.shared.onPeerTransformReceived = { [weak coordinator] peerId, transform in
+            coordinator?.updatePeer(peerId, transform: transform)
         }
 
         NetworkingManager.shared.onPinReceived = { position, label in
@@ -533,25 +526,18 @@ class Coordinator: NSObject, ARSessionDelegate {
 
     // MARK: - Peer Avatars
 
-    func updatePeers(_ transforms: [String: simd_float4x4]) {
+    func updatePeer(_ peerId: String, transform: simd_float4x4) {
         guard let anchor = peersAnchor else { return }
 
-        for (id, transform) in transforms {
-            if peerEntities[id] == nil {
-                let sphere = ModelEntity(
-                    mesh: .generateSphere(radius: 0.05),
-                    materials: [SimpleMaterial(color: .red, isMetallic: false)]
-                )
-                anchor.addChild(sphere)
-                peerEntities[id] = sphere
-            }
-            peerEntities[id]!.transform = Transform(matrix: transform)
+        if peerEntities[peerId] == nil {
+            let sphere = ModelEntity(
+                mesh: .generateSphere(radius: 0.05),
+                materials: [SimpleMaterial(color: .red, isMetallic: false)]
+            )
+            anchor.addChild(sphere)
+            peerEntities[peerId] = sphere
         }
-
-        for id in peerEntities.keys where transforms[id] == nil {
-            peerEntities[id]?.removeFromParent()
-            peerEntities.removeValue(forKey: id)
-        }
+        peerEntities[peerId]!.transform = Transform(matrix: transform)
     }
 
     // MARK: - Pin Placement via Raycast

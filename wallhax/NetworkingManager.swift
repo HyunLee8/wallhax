@@ -369,9 +369,10 @@ class NetworkingManager {
 
     private static func recvExact(sock: Int32, buffer: inout [UInt8]) throws {
         var received = 0
-        while received < buffer.count {
+        let total = buffer.count
+        while received < total {
             let n = buffer.withUnsafeMutableBufferPointer { ptr in
-                recv(sock, ptr.baseAddress! + received, buffer.count - received, 0)
+                recv(sock, ptr.baseAddress! + received, total - received, 0)
             }
             guard n > 0 else {
                 throw NSError(domain: "recv", code: 5, userInfo: [NSLocalizedDescriptionKey: "Connection closed"])
