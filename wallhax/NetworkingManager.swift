@@ -1,5 +1,4 @@
-//  Mapping module — streams camera pose + sparse point cloud over UDP,
-//  and receives peer poses forwarded by the relay server.
+//  Streams camera pose over UDP and receives peer poses + events forwarded by the relay server.
 
 import Foundation
 import ARKit
@@ -17,24 +16,29 @@ class NetworkingManager {
     private var serverAddr: sockaddr_in
     private let serverPort: UInt16 = 9876
     private let localPort: UInt16 = 9877
+    private let tcpEventPort: UInt16 = 9878
 
     private(set) var serverDiscovered = false
     private let serverAddrLock = NSLock()
     private(set) var missionId: String = "unknown"
 
-    // Throttle: process every N frames (ARKit runs at 60fps, we don't need all of them)
+    private var tcpSocket: Int32 = -1
+    private let tcpSocketLock = NSLock()
+    private(set) var tcpConnected = false
+    private var tcpReconnecting = false
+
+    // Throttle: send every N frames (ARKit runs at 60fps)
     private var frameCount = 0
     private let sendEveryN = 3  // ~20 updates/sec
 
-    // Point cloud accumulation
-    private var collectedPoints: Set<PointKey> = []
-    private var isCollecting = false
+    // MARK: - Events
 
-    private let peerLock = NSLock()
-    private(set) var peerTransforms: [String: simd_float4x4] = [:]
-    var onPeersUpdated: (([String: simd_float4x4]) -> Void)?
+    var onPeerTransformReceived: ((String, simd_float4x4) -> Void)?
     var onPinReceived: ((SIMD3<Float>, String) -> Void)?
     var onConnectionChanged: ((Bool) -> Void)?
+    var onTCPConnectionChanged: ((Bool) -> Void)?
+
+    // MARK: - Init
 
     private init() {
         serverAddr = sockaddr_in()
@@ -83,10 +87,13 @@ class NetworkingManager {
             sendDiscovery()
         } else {
             print("[NetworkingManager] using static server IP: \(staticServerIP!)")
+            DispatchQueue.global(qos: .background).async { [weak self] in self?.connectTCP() }
         }
     }
 
     func getServerIP() -> String { staticServerIP ?? "" }
+
+    // MARK: - Outbound
 
     func processFrame(_ frame: ARFrame) {
         frameCount += 1
@@ -111,12 +118,6 @@ class NetworkingManager {
             t.columns.3.x, t.columns.3.y, t.columns.3.z, t.columns.3.w
         ]
 
-        if isCollecting, let features = frame.rawFeaturePoints {
-            for p in features.points {
-                collectedPoints.insert(PointKey(p))
-            }
-        }
-
         let originDetected = frame.anchors.contains(where: { $0 is ARImageAnchor })
 
         let payload: [String: Any] = [
@@ -133,6 +134,65 @@ class NetworkingManager {
             sendUDP(jsonString)
         }
     }
+
+    func sendPin(position: SIMD3<Float>, label: String) {
+        sendTCPMessage([
+            "type": "pin",
+            "client_id": clientId,
+            "position": [position.x, position.y, position.z],
+            "label": label
+        ])
+    }
+
+    func sendToMac(sessionPath: String, onStatusUpdate: @escaping (Bool, Bool, String) -> Void) {
+        onStatusUpdate(false, false, "Connecting...")
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            let serverPort: UInt16 = 9877
+
+            do {
+                let sock = try Self.createTCPSocket(host: NetworkingManager.shared.getServerIP(), port: serverPort)
+                let sessionURL = URL(fileURLWithPath: sessionPath)
+                let fm = FileManager.default
+
+                guard let enumerator = fm.enumerator(at: sessionURL, includingPropertiesForKeys: nil) else {
+                    DispatchQueue.main.async { onStatusUpdate(true, false, "Failed to read scan folder") }
+                    return
+                }
+
+                var files: [(relativePath: String, data: Data)] = []
+                while let fileURL = enumerator.nextObject() as? URL {
+                    guard fileURL.isFileURL, !fileURL.hasDirectoryPath else { continue }
+                    let filePath = fileURL.standardizedFileURL.path
+                    let basePath = sessionURL.standardizedFileURL.path + "/"
+                    let relativePath = filePath.hasPrefix(basePath)
+                        ? String(filePath.dropFirst(basePath.count))
+                        : fileURL.lastPathComponent
+                    if let data = try? Data(contentsOf: fileURL) {
+                        files.append((relativePath: relativePath, data: data))
+                    }
+                }
+
+                try Self.sendPacket(sock: sock, data: NetworkingManager.shared.missionId.data(using: .utf8)!)
+                try Self.sendPacket(sock: sock, data: NetworkingManager.shared.clientId.data(using: .utf8)!)
+                try Self.sendPacket(sock: sock, data: "\(files.count)".data(using: .utf8)!)
+
+                for (i, file) in files.enumerated() {
+                    DispatchQueue.main.async { onStatusUpdate(false, false, "Sending \(i + 1)/\(files.count)...") }
+                    try Self.sendPacket(sock: sock, data: file.relativePath.data(using: .utf8)!)
+                    try Self.sendPacket(sock: sock, data: file.data)
+                }
+
+                close(sock)
+                DispatchQueue.main.async { onStatusUpdate(true, true, "Sent \(files.count) files ✓") }
+
+            } catch {
+                DispatchQueue.main.async { onStatusUpdate(true, false, "Send failed: \(error.localizedDescription)") }
+            }
+        }
+    }
+
+    // MARK: - UDP
 
     private func sendDiscovery() {
         let result = sendUDP("{\"type\":\"discover\",\"client_id\":\"\(clientId)\"}")
@@ -176,16 +236,7 @@ class NetworkingManager {
                     let ip = String(cString: inet_ntoa(srcAddr.sin_addr))
                     print("[NetworkingManager] server discovered at \(ip):\(self.serverPort), mission=\(self.missionId.prefix(8))")
                     DispatchQueue.main.async { self.onConnectionChanged?(true) }
-                    continue
-                }
-
-                if let type_ = payload["type"] as? String, type_ == "pin",
-                   let posArray = payload["position"] as? [NSNumber], posArray.count == 3,
-                   let label = payload["label"] as? String {
-                    let position = SIMD3<Float>(posArray[0].floatValue, posArray[1].floatValue, posArray[2].floatValue)
-                    DispatchQueue.main.async {
-                        self.onPinReceived?(position, label)
-                    }
+                    DispatchQueue.global(qos: .background).async { self.connectTCP() }
                     continue
                 }
 
@@ -204,13 +255,8 @@ class NetworkingManager {
                     SIMD4<Float>(f[12], f[13], f[14], f[15])
                 )
 
-                self.peerLock.lock()
-                self.peerTransforms[peerId] = matrix
-                let snapshot = self.peerTransforms
-                self.peerLock.unlock()
-
                 DispatchQueue.main.async {
-                    self.onPeersUpdated?(snapshot)
+                    self.onPeerTransformReceived?(peerId, matrix)
                 }
             }
         }
@@ -251,47 +297,147 @@ class NetworkingManager {
         }
     }
 
-    func sendPin(position: SIMD3<Float>, label: String) {
-        let payload: [String: Any] = [
-            "type": "pin",
-            "client_id": clientId,
-            "position": [position.x, position.y, position.z],
-            "label": label
-        ]
-        if let jsonData = try? JSONSerialization.data(withJSONObject: payload),
-           let jsonString = String(data: jsonData, encoding: .utf8) {
-            sendUDP(jsonString)
+    // MARK: - TCP Events
+
+    private func connectTCP() {
+        guard serverDiscovered else { return }
+        let newSock = (try? Self.createTCPSocket(host: getServerIP(), port: tcpEventPort)) ?? -1
+        tcpSocketLock.lock()
+        if tcpSocket >= 0 { close(tcpSocket) }
+        tcpSocket = newSock
+        tcpSocketLock.unlock()
+        let connected = newSock >= 0
+        guard connected != tcpConnected else { return }
+        tcpConnected = connected
+        print("[NetworkingManager] TCP event socket \(connected ? "connected" : "failed")")
+        DispatchQueue.main.async { self.onTCPConnectionChanged?(connected) }
+        if connected { startTCPReceiveLoop(sock: newSock) }
+    }
+
+    private func startTCPReceiveLoop(sock: Int32) {
+        DispatchQueue(label: "com.wallhax.tcp.receive", qos: .background).async { [weak self] in
+            guard let self else { return }
+            print("[NetworkingManager] TCP receive loop started (fd=\(sock))")
+            while true {
+                guard let data = try? Self.recvPacket(sock: sock),
+                      let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                else {
+                    self.tcpSocketLock.lock()
+                    if self.tcpSocket == sock { close(self.tcpSocket); self.tcpSocket = -1 }
+                    self.tcpSocketLock.unlock()
+                    guard self.tcpConnected else { return }
+                    self.tcpConnected = false
+                    print("[NetworkingManager] TCP receive loop ended (fd=\(sock))")
+                    DispatchQueue.main.async { self.onTCPConnectionChanged?(false) }
+                    self.reconnectTCPInBackground()
+                    return
+                }
+
+                if payload["type"] as? String == "pin",
+                   let posArray = payload["position"] as? [NSNumber], posArray.count == 3,
+                   let label = payload["label"] as? String {
+                    let position = SIMD3<Float>(posArray[0].floatValue, posArray[1].floatValue, posArray[2].floatValue)
+                    DispatchQueue.main.async { self.onPinReceived?(position, label) }
+                }
+            }
         }
     }
 
-    func startCollection() {
-        collectedPoints = []
-        isCollecting = true
+    private func reconnectTCPInBackground() {
+        guard !tcpReconnecting else { return }
+        tcpReconnecting = true
+        DispatchQueue.global(qos: .background).asyncAfter(deadline: .now() + 3) { [weak self] in
+            guard let self else { return }
+            self.connectTCP()
+            self.tcpReconnecting = false
+            if !self.tcpConnected { self.reconnectTCPInBackground() }
+        }
     }
 
-    func stopCollection() -> [[Float]] {
-        isCollecting = false
-        let points = collectedPoints.map { [$0.x, $0.y, $0.z] }
-        collectedPoints = []
-        return points
+    func sendTCPMessage(_ payload: [String: Any]) {
+        guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return }
+        tcpSocketLock.lock()
+        let sock = tcpSocket
+        tcpSocketLock.unlock()
+        guard sock >= 0 else { return }
+        // Send errors are handled by the receive loop detecting the closed connection
+        try? Self.sendPacket(sock: sock, data: data)
+    }
+
+    // MARK: - TCP Helpers
+
+    private static func recvExact(sock: Int32, buffer: inout [UInt8]) throws {
+        var received = 0
+        while received < buffer.count {
+            let n = buffer.withUnsafeMutableBufferPointer { ptr in
+                recv(sock, ptr.baseAddress! + received, buffer.count - received, 0)
+            }
+            guard n > 0 else {
+                throw NSError(domain: "recv", code: 5, userInfo: [NSLocalizedDescriptionKey: "Connection closed"])
+            }
+            received += n
+        }
+    }
+
+    private static func recvPacket(sock: Int32) throws -> Data {
+        var lengthBytes = [UInt8](repeating: 0, count: 4)
+        try recvExact(sock: sock, buffer: &lengthBytes)
+        let length = Int(UInt32(bigEndian: lengthBytes.withUnsafeBytes { $0.load(as: UInt32.self) }))
+        var dataBytes = [UInt8](repeating: 0, count: length)
+        try recvExact(sock: sock, buffer: &dataBytes)
+        return Data(dataBytes)
+    }
+
+    private static func createTCPSocket(host: String, port: UInt16) throws -> Int32 {
+        let sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
+        guard sock >= 0 else {
+            throw NSError(domain: "socket", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to create socket"])
+        }
+
+        var addr = sockaddr_in()
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = port.bigEndian
+        addr.sin_addr.s_addr = inet_addr(host)
+
+        let result = withUnsafePointer(to: &addr) { ptr in
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in
+                connect(sock, sockPtr, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+
+        guard result >= 0 else {
+            close(sock)
+            throw NSError(domain: "socket", code: 2, userInfo: [NSLocalizedDescriptionKey: "Failed to connect to \(host):\(port)"])
+        }
+
+        return sock
+    }
+
+    private static func sendPacket(sock: Int32, data: Data) throws {
+        var length = UInt32(data.count).bigEndian
+        let lengthData = Data(bytes: &length, count: 4)
+
+        try lengthData.withUnsafeBytes { ptr in
+            let sent = send(sock, ptr.baseAddress!, 4, 0)
+            if sent < 0 {
+                throw NSError(domain: "send", code: 3, userInfo: [NSLocalizedDescriptionKey: "Failed to send length"])
+            }
+        }
+
+        try data.withUnsafeBytes { ptr in
+            var totalSent = 0
+            while totalSent < data.count {
+                let sent = send(sock, ptr.baseAddress! + totalSent, data.count - totalSent, 0)
+                if sent < 0 {
+                    throw NSError(domain: "send", code: 4, userInfo: [NSLocalizedDescriptionKey: "Failed to send data"])
+                }
+                totalSent += sent
+            }
+        }
     }
 
     deinit {
-        if udpSocket >= 0 {
-            close(udpSocket)
-        }
-    }
-}
-
-// Deduplicated point key rounded to 1cm precision
-private struct PointKey: Hashable {
-    let x: Float
-    let y: Float
-    let z: Float
-
-    init(_ p: SIMD3<Float>) {
-        x = (p.x * 100).rounded() / 100
-        y = (p.y * 100).rounded() / 100
-        z = (p.z * 100).rounded() / 100
+        if udpSocket >= 0 { close(udpSocket) }
+        if tcpSocket >= 0 { close(tcpSocket) }
     }
 }
