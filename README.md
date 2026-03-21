@@ -63,23 +63,3 @@ Output goes to `mapping/processed/<mission>/` (`transforms.json`, `images/`, opt
 ```bash
 ns-train splatfacto --data mapping/processed/<mission_id>
 ```
-
-## Network overview
-
-```mermaid
-flowchart LR
-  subgraph devices [iOS devices]
-    A[WallHax app]
-  end
-  subgraph mac [Mac]
-    R[Relay main.py]
-    V[Matplotlib visualizer]
-    RS[receive_scan.py]
-  end
-  A -->|"UDP 9876 poses / discover"| R
-  A -->|"TCP 9878 events"| R
-  R --> V
-  A -->|"TCP 9877 Send to Mac"| RS
-```
-
-Ports in use: **9876** (relay UDP), **9877** (TCP scan receive and related client binding), **9878** (relay TCP events).
