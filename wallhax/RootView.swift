@@ -13,11 +13,21 @@ struct RootView: View {
     var body: some View {
         ZStack {
             if let useCase = selectedUseCase {
-                ContentView(useCase: useCase, onExit: {
-                    withAnimation(.spring(response: 0.45, dampingFraction: 0.88)) {
-                        selectedUseCase = nil
+                Group {
+                    if useCase.id == "military" {
+                        MilitaryOperationsView(useCase: useCase, onExit: {
+                            withAnimation(.spring(response: 0.45, dampingFraction: 0.88)) {
+                                selectedUseCase = nil
+                            }
+                        })
+                    } else {
+                        ContentView(useCase: useCase, onExit: {
+                            withAnimation(.spring(response: 0.45, dampingFraction: 0.88)) {
+                                selectedUseCase = nil
+                            }
+                        })
                     }
-                })
+                }
                 .transition(.asymmetric(
                     insertion: .opacity.combined(with: .scale(scale: 1.03)),
                     removal: .opacity
