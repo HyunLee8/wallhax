@@ -32,8 +32,8 @@ def parse_xmp(xmp_path):
         "h": "float(desc.find('tiff:ImageLength', ns).text)",
         "fx": "float(desc.find('tiff:ImageLength', ns).text)",
         "fy": "float(desc.find('tiff:ImageLength', ns).text)",
-        "c": "float(desc.find('tiff:ImageLength', ns).text)",
-        "h": "float(desc.find('tiff:ImageLength', ns).text)",
+        "cx": "float(desc.find('tiff:ImageLength', ns).text)",
+        "cy": "float(desc.find('tiff:ImageLength', ns).text)",
     }
 
     # Parse 4x4 matrix
@@ -117,8 +117,8 @@ def main():
     transforms = {
         "w": global_intrinsics['w'],
         "h": global_intrinsics['h'],
-        "fl_x": global_intrinsics['fl_x'],
-        "fl_y": global_intrinsics['fl_y'],
+        "fx": global_intrinsics['fx'],
+        "fy": global_intrinsics['fy'],
         "cx": global_intrinsics['cx'],
         "cy": global_intrinsics['cy'],
         "camera_model": "OPENCV",
