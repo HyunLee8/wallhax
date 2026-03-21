@@ -59,7 +59,57 @@ def parse_xmp(xmp_path):
     return intrinsics, cv_pose.tolist()
 
 def main():
-    pass
+    parser = argparse.ArgumentParser(description="Merge WallHax clients into a Nerfstudio dataset.")
+    parser.add_argument("--mission", required=True, help="The mission ID folder name in ./data/")
+    args = parser.parse_args()
+
+    data_dir = os.path.join("data", args.mission)
+    out_dir = os.path.join("processed", args.mission)
+    img_out_dir = os.path.join(out_dir, "images")
+
+    if not os.path.exists(data_dir):
+        print(f"Error: Mission directory {data_dir} not found.")
+        return
+
+    # exist_ok leaves directory unaltered if target directory already exists
+    os.makedirs(img_out_dir, exist_ok=True)
+
+    frames_data = []
+    global_intrinsics = None  # Assumes every image is taken with same camera lens configuration
+    client_dirs = [d for d in os.listdir(data_dir) if os.path.isdir(os.path.join(data_dir, d))]
+
+    print(f"Found {len(client_dirs)} clients in mission {args.mission}. Merging...")
+
+    # Appends client id to frames/images to prevent name collision between people
+    for client_id in client_dirs:
+        client_path = os.path.join(data_dir, client_id)
+        
+        for file in sorted(os.listdir(client_path)):
+            if file.endswith('.jpg'):
+                base = file.replace('.jpg', '')
+                jpg_path = os.path.join(client_path, file)
+                xmp_path = os.path.join(client_path, f"{base}.xmp")
+                
+                if os.path.exists(xmp_path):
+                    parsed_data = parse_xmp(xmp_path)
+                    if not parsed_data: continue
+                    
+                    intrinsics, transform = parsed_data
+                    if not global_intrinsics: global_intrinsics = intrinsics
+
+                    # Format: "clientA_frame_00001.jpg"
+                    new_img_name = f"{client_id[:8]}_{file}"
+                    new_img_path = os.path.join(img_out_dir, new_img_name)
+                    
+                    # Copy the image to the new unified folder
+                    shutil.copy2(jpg_path, new_img_path)
+                    
+                    # Append relative path to the images/ folder for Nerfstudio
+                    frames_data.append({
+                        "file_path": f"images/{new_img_name}",
+                        "transform_matrix": transform
+                    })
+
 
 if __name__ == "__main__":
     main()
