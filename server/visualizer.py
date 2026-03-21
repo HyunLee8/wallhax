@@ -4,6 +4,7 @@ visualizer.py — Multi-client real-time 3D map visualizer for WallHax
 """
 
 import threading
+import time
 import numpy as np
 import matplotlib
 matplotlib.use('TkAgg')
@@ -11,6 +12,7 @@ import matplotlib.pyplot as plt
 from collections import deque
 
 MAX_TRAJECTORY_POINTS = 5000
+CLIENT_TIMEOUT = 3.0
 
 CLIENT_COLORS = [
     '#E8655A',  # warm coral
@@ -30,6 +32,7 @@ class ClientState:
         self.trajectory: deque = deque(maxlen=MAX_TRAJECTORY_POINTS)
         self.tracking_state: str = 'waiting...'
         self.origin_locked: bool = False
+        self.last_seen: float = time.time()
 
 
 class Visualizer:
@@ -78,9 +81,16 @@ class Visualizer:
             state.trajectory.append(position)
             state.tracking_state = tracking_state
             state.origin_locked = origin_locked
+            state.last_seen = time.time()
 
     def render(self):
         with self._lock:
+            cutoff = time.time() - CLIENT_TIMEOUT
+            stale = [cid for cid, s in self._clients.items() if s.last_seen < cutoff]
+            for cid in stale:
+                del self._clients[cid]
+                del self._client_colors[cid]
+
             snapshot = {
                 cid: (
                     np.array(list(s.trajectory)) if s.trajectory else np.empty((0, 3)),
