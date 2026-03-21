@@ -8,9 +8,8 @@
 import SwiftUI
 
 struct RootView: View {
-    @State private var pendingUseCase: UseCase?   // mode chosen, awaiting callsign
-    @State private var selectedUseCase: UseCase?  // mode + callsign confirmed
-    @State private var callsign: String = ""
+    @AppStorage("operatorCallsign") private var savedCallsign: String = ""
+    @State private var selectedUseCase: UseCase?
 
     var body: some View {
         ZStack {
@@ -18,9 +17,9 @@ struct RootView: View {
                 // ── Operational view ─────────────────────────────
                 Group {
                     if useCase.id == "military" {
-                        MilitaryOperationsView(useCase: useCase, callsign: callsign, onExit: exit)
+                        MilitaryOperationsView(useCase: useCase, callsign: savedCallsign, onExit: exit)
                     } else {
-                        ContentView(useCase: useCase, callsign: callsign, onExit: exit)
+                        ContentView(useCase: useCase, callsign: savedCallsign, onExit: exit)
                     }
                 }
                 .transition(.asymmetric(
@@ -28,25 +27,11 @@ struct RootView: View {
                     removal: .opacity
                 ))
 
-            } else if let useCase = pendingUseCase {
-                // ── Callsign entry ───────────────────────────────
-                CallsignEntryView(useCase: useCase) { name in
-                    callsign = name
-                    withAnimation(.spring(response: 0.45, dampingFraction: 0.88)) {
-                        pendingUseCase = nil
-                        selectedUseCase = useCase
-                    }
-                }
-                .transition(.asymmetric(
-                    insertion: .opacity.combined(with: .move(edge: .bottom)),
-                    removal: .opacity
-                ))
-
             } else {
                 // ── Mode selection ───────────────────────────────
                 UseCaseSelectionView { useCase in
                     withAnimation(.spring(response: 0.45, dampingFraction: 0.88)) {
-                        pendingUseCase = useCase
+                        selectedUseCase = useCase
                     }
                 }
                 .transition(.opacity)
@@ -57,7 +42,6 @@ struct RootView: View {
     private func exit() {
         withAnimation(.spring(response: 0.45, dampingFraction: 0.88)) {
             selectedUseCase = nil
-            pendingUseCase = nil
         }
     }
 }

@@ -8,8 +8,12 @@ import SwiftUI
 struct UseCaseSelectionView: View {
     let onSelect: (UseCase) -> Void
 
+    @AppStorage("operatorCallsign") private var savedCallsign: String = ""
     @State private var headerVisible = false
     @State private var cardsVisible = false
+    @State private var editingCallsign = false
+    @State private var callsignInput: String = ""
+    @FocusState private var callsignFocused: Bool
 
     var body: some View {
         ZStack {
@@ -42,7 +46,87 @@ struct UseCaseSelectionView: View {
                 .opacity(headerVisible ? 1 : 0)
                 .offset(y: headerVisible ? 0 : 12)
                 .padding(.top, 100)
-                .padding(.bottom, 52)
+                .padding(.bottom, 28)
+
+                // Nameplate field
+                Group {
+                    if editingCallsign {
+                        HStack(spacing: 10) {
+                            Image(systemName: "person.fill")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(.white.opacity(0.4))
+
+                            TextField("Your name or callsign", text: $callsignInput)
+                                .font(.system(size: 15, weight: .semibold, design: .rounded))
+                                .foregroundColor(.white)
+                                .tint(.white)
+                                .autocorrectionDisabled()
+                                .textInputAutocapitalization(.words)
+                                .focused($callsignFocused)
+                                .submitLabel(.done)
+                                .onSubmit { commitCallsign() }
+
+                            Button(action: commitCallsign) {
+                                Text("Save")
+                                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 6)
+                                    .background(Color.white.opacity(0.15))
+                                    .clipShape(Capsule())
+                            }
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 13)
+                        .background(Color.white.opacity(0.08))
+                        .clipShape(RoundedRectangle(cornerRadius: 14))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14)
+                                .stroke(Color.white.opacity(0.2), lineWidth: 1)
+                        )
+                    } else {
+                        HStack(spacing: 10) {
+                            Image(systemName: "person.fill")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(.white.opacity(0.4))
+
+                            if savedCallsign.isEmpty {
+                                Text("Set your nameplate")
+                                    .font(.system(size: 15, weight: .medium, design: .rounded))
+                                    .foregroundColor(.white.opacity(0.3))
+                            } else {
+                                Text(savedCallsign)
+                                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                                    .foregroundColor(.white)
+                            }
+
+                            Spacer()
+
+                            Button(action: {
+                                callsignInput = savedCallsign
+                                editingCallsign = true
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                    callsignFocused = true
+                                }
+                            }) {
+                                Image(systemName: savedCallsign.isEmpty ? "plus.circle" : "pencil")
+                                    .font(.system(size: 15, weight: .medium))
+                                    .foregroundColor(.white.opacity(0.4))
+                            }
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 13)
+                        .background(Color.white.opacity(0.05))
+                        .clipShape(RoundedRectangle(cornerRadius: 14))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14)
+                                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                        )
+                    }
+                }
+                .padding(.horizontal, 20)
+                .opacity(headerVisible ? 1 : 0)
+                .padding(.bottom, 24)
 
                 // Cards
                 VStack(spacing: 14) {
@@ -79,6 +163,13 @@ struct UseCaseSelectionView: View {
                 cardsVisible = true
             }
         }
+    }
+
+    private func commitCallsign() {
+        let trimmed = String(callsignInput.prefix(24)).trimmingCharacters(in: .whitespaces)
+        savedCallsign = trimmed
+        editingCallsign = false
+        callsignFocused = false
     }
 }
 
