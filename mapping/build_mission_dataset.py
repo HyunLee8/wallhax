@@ -24,7 +24,7 @@ def parse_xmp(xmp_path):
     }
 
     desc = root.find('.//rdf:Description', nd)
-    if not is None: return None
+    if desc is None: return None 
 
     # Parse intrinsics
     intrinsics = {
@@ -104,12 +104,34 @@ def main():
                     # Copy the image to the new unified folder
                     shutil.copy2(jpg_path, new_img_path)
                     
-                    # Append relative path to the images/ folder for Nerfstudio
+                    # Append relative path to the images/folder for Nerfstudio
                     frames_data.append({
                         "file_path": f"images/{new_img_name}",
                         "transform_matrix": transform
                     })
 
+    if not frames_data:
+        print("Failed to find any valid image/XMP pairs.")
+        return
+    
+    transforms = {
+        "w": global_intrinsics['w'],
+        "h": global_intrinsics['h'],
+        "fl_x": global_intrinsics['fl_x'],
+        "fl_y": global_intrinsics['fl_y'],
+        "cx": global_intrinsics['cx'],
+        "cy": global_intrinsics['cy'],
+        "camera_model": "OPENCV",
+        "frames": frames_data
+    }
+
+    json_out = os.path.join(out_dir, 'transforms.json')
+    with open(json_out, 'w') as f:
+        json.dump(transforms, f, indent=4)
+
+    print(f"\n✅ Success! Merged {len(frames_data)} frames across {len(client_dirs)} clients.")
+    print(f"Dataset ready at: {out_dir}")
+    print(f"\nTo train, run:\n ns-train splatfacto --data {out_dir}")
 
 if __name__ == "__main__":
     main()
