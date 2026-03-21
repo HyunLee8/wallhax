@@ -208,9 +208,10 @@ class NetworkingManager {
 
             while true {
                 var srcAddrLen = socklen_t(MemoryLayout<sockaddr_in>.size)
+                let bufferCount = buffer.count
                 let n = withUnsafeMutablePointer(to: &srcAddr) { ptr in
                     ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in
-                        recvfrom(self.udpSocket, &buffer, buffer.count, 0, sockPtr, &srcAddrLen)
+                        recvfrom(self.udpSocket, &buffer, bufferCount, 0, sockPtr, &srcAddrLen)
                     }
                 }
                 guard n > 0 else {
