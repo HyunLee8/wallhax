@@ -12,6 +12,8 @@ struct ContentView: View {
     let onExit: () -> Void
 
     @StateObject private var arState = ARState.shared
+    @AppStorage("lidarEnabled") private var lidarEnabled = true
+    @State private var lidarLoading = false
     @State private var isRecording = false
     @State private var hasRecording = false
     @State private var frameCount = 0
@@ -29,7 +31,7 @@ struct ContentView: View {
 
     var body: some View {
         ZStack {
-            ARViewContainer(isRecording: $isRecording)
+            ARViewContainer(isRecording: $isRecording, lidarEnabled: $lidarEnabled)
                 .edgesIgnoringSafeArea(.all)
                 .allowsHitTesting(false)
 
@@ -140,6 +142,35 @@ struct ContentView: View {
 
                 // ── Bottom controls ──────────────────────────────
                 HStack(spacing: 16) {
+                    // LiDAR toggle
+                    Button(action: {
+                        lidarLoading = true
+                        lidarEnabled.toggle()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { lidarLoading = false }
+                    }) {
+                        VStack(spacing: 4) {
+                            ZStack {
+                                Circle()
+                                    .fill(lidarEnabled ? accentColor.opacity(0.15) : Color.black.opacity(0.55))
+                                    .frame(width: 44, height: 44)
+                                    .overlay(Circle().stroke(lidarEnabled ? accentColor.opacity(0.5) : Color.white.opacity(0.15), lineWidth: 1))
+                                if lidarLoading {
+                                    ProgressView()
+                                        .progressViewStyle(CircularProgressViewStyle(tint: accentColor))
+                                        .scaleEffect(0.75)
+                                } else {
+                                    Image(systemName: "lidar.scanner")
+                                        .font(.system(size: 17, weight: .medium))
+                                        .foregroundColor(lidarEnabled ? accentColor : .white.opacity(0.35))
+                                }
+                            }
+                            Text(lidarLoading ? "Loading..." : lidarEnabled ? "Turn Off" : "Turn On")
+                                .font(.system(size: 9, weight: .semibold, design: .rounded))
+                                .foregroundColor(lidarEnabled ? accentColor.opacity(0.8) : .white.opacity(0.35))
+                        }
+                    }
+                    .disabled(lidarLoading)
+
                     // Pin button — long press for radial wheel
                     ZStack {
                         Circle()
@@ -453,6 +484,7 @@ struct ContentView: View {
 
 struct ARViewContainer: UIViewRepresentable {
     @Binding var isRecording: Bool
+    @Binding var lidarEnabled: Bool
 
     func makeCoordinator() -> Coordinator {
         Coordinator(isRecording: $isRecording)
@@ -462,6 +494,7 @@ struct ARViewContainer: UIViewRepresentable {
         let arView = ARView(frame: .zero, cameraMode: .ar, automaticallyConfigureSession: false)
         arView.session.delegate = context.coordinator
         context.coordinator.arView = arView
+        context.coordinator.lastLidarEnabled = lidarEnabled
 
         let scnView = SCNView(frame: arView.bounds)
         scnView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -512,23 +545,30 @@ struct ARViewContainer: UIViewRepresentable {
             }
         )
 
-        let configuration = ARWorldTrackingConfiguration()
-        
-        configuration.planeDetection = [.horizontal, .vertical]
-        if ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) {
-            configuration.sceneReconstruction = .mesh
-            arView.debugOptions.insert(.showSceneUnderstanding)
-        }
-        
-        if let referenceImages = ARReferenceImage.referenceImages(inGroupNamed: "Origin Reference Images", bundle: nil) {
-            configuration.detectionImages = referenceImages
-        }
-
-        arView.session.run(configuration)
+        runSession(arView, lidarEnabled: lidarEnabled)
         return arView
     }
 
-    func updateUIView(_ uiView: ARView, context: Context) {}
+    func updateUIView(_ uiView: ARView, context: Context) {
+        guard context.coordinator.lastLidarEnabled != lidarEnabled else { return }
+        context.coordinator.lastLidarEnabled = lidarEnabled
+        runSession(uiView, lidarEnabled: lidarEnabled)
+    }
+
+    private func runSession(_ arView: ARView, lidarEnabled: Bool) {
+        let configuration = ARWorldTrackingConfiguration()
+        configuration.planeDetection = [.horizontal, .vertical]
+        if lidarEnabled && ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) {
+            configuration.sceneReconstruction = .mesh
+            arView.debugOptions.insert(.showSceneUnderstanding)
+        } else {
+            arView.debugOptions.remove(.showSceneUnderstanding)
+        }
+        if let referenceImages = ARReferenceImage.referenceImages(inGroupNamed: "Origin Reference Images", bundle: nil) {
+            configuration.detectionImages = referenceImages
+        }
+        arView.session.run(configuration)
+    }
 }
 
 // MARK: - AR Session Coordinator
@@ -536,6 +576,7 @@ struct ARViewContainer: UIViewRepresentable {
 class Coordinator: NSObject, ARSessionDelegate {
     weak var arView: ARView?
     @Binding var isRecording: Bool
+    var lastLidarEnabled: Bool = true
     var scnView: SCNView?
     var scnCameraNode = SCNNode()
     var peerCylinders: [String: SCNNode] = [:]

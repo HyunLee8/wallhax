@@ -10,6 +10,8 @@ struct MilitaryOperationsView: View {
     let onExit: () -> Void
 
     @StateObject private var arState = ARState.shared
+    @AppStorage("lidarEnabled") private var lidarEnabled = true
+    @State private var lidarLoading = false
     @State private var isRecording = false
     @State private var hasRecording = false
     @State private var frameCount = 0
@@ -35,7 +37,7 @@ struct MilitaryOperationsView: View {
             let isLandscape = geo.size.width > geo.size.height
 
             ZStack {
-                ARViewContainer(isRecording: $isRecording)
+                ARViewContainer(isRecording: $isRecording, lidarEnabled: $lidarEnabled)
                     .edgesIgnoringSafeArea(.all)
                     .allowsHitTesting(false)
 
@@ -496,9 +498,44 @@ struct MilitaryOperationsView: View {
             controlsMark
             controlsRecord(compact: compact)
             if hasRecording && !isRecording { controlsTX(compact: compact) }
+            controlsLidar(compact: compact)
         }
         .padding(.horizontal, 14)
         .padding(.bottom, compact ? 0 : 44)
+    }
+
+    private func controlsLidar(compact: Bool) -> some View {
+        Button(action: {
+            lidarLoading = true
+            lidarEnabled.toggle()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { lidarLoading = false }
+        }) {
+            HStack(spacing: compact ? 4 : 6) {
+                if lidarLoading {
+                    ProgressView()
+                        .progressViewStyle(CircularProgressViewStyle(tint: hue))
+                        .scaleEffect(0.65)
+                        .frame(width: compact ? 10 : 12, height: compact ? 10 : 12)
+                } else {
+                    Image(systemName: "lidar.scanner")
+                        .font(.system(size: compact ? 10 : 12, weight: .bold))
+                }
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("LIDAR")
+                        .font(.system(size: compact ? 9 : 11, weight: .black, design: .monospaced))
+                        .tracking(1.5)
+                    Text(lidarLoading ? "LOADING" : lidarEnabled ? "TURN OFF" : "TURN ON")
+                        .font(.system(size: 7, weight: .regular, design: .monospaced))
+                        .foregroundColor(lidarLoading ? hueDim : lidarEnabled ? hue.opacity(0.8) : hueDim)
+                }
+            }
+            .foregroundColor(lidarEnabled && !lidarLoading ? hue : hueDim)
+            .padding(.horizontal, compact ? 10 : 14)
+            .padding(.vertical, compact ? 9 : 12)
+            .background(lidarEnabled ? hue.opacity(0.10) : bg)
+            .overlay(Rectangle().stroke(lidarEnabled ? hue.opacity(0.5) : hue.opacity(0.2), lineWidth: 1))
+        }
+        .disabled(lidarLoading)
     }
 
     // MARK: - Control Atoms
