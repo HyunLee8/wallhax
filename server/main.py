@@ -25,6 +25,20 @@ TCP_EVENT_PORT = 9878
 CLIENT_TIMEOUT = 3.0
 
 
+class PlanesStore:
+    def __init__(self):
+        self._planes: dict[str, list] = {}
+        self._lock = threading.Lock()
+
+    def update(self, client_id: str, planes: list) -> None:
+        with self._lock:
+            self._planes[client_id] = planes
+
+    def all_planes(self) -> list:
+        with self._lock:
+            return [plane for planes in self._planes.values() for plane in planes]
+
+
 class TCPSessionRegistry:
     def __init__(self):
         self._sessions: dict[str, tuple[socket.socket, threading.Lock]] = {}
@@ -93,7 +107,7 @@ def _send_tcp_packet(conn: socket.socket, data: bytes) -> None:
 
 
 def _handle_tcp_client(conn: socket.socket, addr: tuple, tcp_sessions: TCPSessionRegistry,
-                        vis) -> None:
+                        planes_store: PlanesStore, vis) -> None:
     print(f"[relay] TCP client connected: {addr[0]}")
     client_id = None
     try:
@@ -110,7 +124,13 @@ def _handle_tcp_client(conn: socket.socket, addr: tuple, tcp_sessions: TCPSessio
                 tcp_sessions.register(client_id, conn)
 
             if payload.get('type') == 'planes':
-                vis.update_planes(client_id or '', payload.get('planes', []))
+                planes = payload.get('planes', [])
+                planes_store.update(client_id or '', planes)
+                vis.update_planes(client_id or '', planes)
+                tcp_sessions.forward(client_id or '', data)
+            elif payload.get('type') == 'get_planes':
+                response = json.dumps({'type': 'planes_all', 'planes': planes_store.all_planes()}).encode()
+                _send_tcp_packet(conn, response)
             elif payload.get('type') == 'pin':
                 vis.add_pin(payload.get('position', [0, 0, 0]), payload.get('label', ''))
                 tcp_sessions.forward(client_id or '', data)
@@ -123,7 +143,7 @@ def _handle_tcp_client(conn: socket.socket, addr: tuple, tcp_sessions: TCPSessio
         print(f"[relay] TCP client disconnected: {addr[0]}")
 
 
-def _start_tcp_listener(tcp_sessions: TCPSessionRegistry, vis) -> None:
+def _start_tcp_listener(tcp_sessions: TCPSessionRegistry, planes_store: PlanesStore, vis) -> None:
     tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     tcp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     tcp_sock.bind(('', TCP_EVENT_PORT))
@@ -133,7 +153,7 @@ def _start_tcp_listener(tcp_sessions: TCPSessionRegistry, vis) -> None:
         conn, addr = tcp_sock.accept()
         threading.Thread(
             target=_handle_tcp_client,
-            args=(conn, addr, tcp_sessions, vis),
+            args=(conn, addr, tcp_sessions, planes_store, vis),
             daemon=True
         ).start()
 
@@ -157,10 +177,11 @@ def main():
 
     registry = ClientRegistry()
     tcp_sessions = TCPSessionRegistry()
+    planes_store = PlanesStore()
     vis = Visualizer()
     packet_count = 0
 
-    threading.Thread(target=_start_tcp_listener, args=(tcp_sessions, vis), daemon=True).start()
+    threading.Thread(target=_start_tcp_listener, args=(tcp_sessions, planes_store, vis), daemon=True).start()
     print("[relay] Visualizer ready. Waiting for devices...\n")
 
     while True:

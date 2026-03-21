@@ -67,6 +67,7 @@ struct MilitaryOperationsView: View {
                         heading: arState.heading,
                         pins: arState.pins,
                         peers: arState.peers,
+                        walls: arState.walls,
                         accentColor: hue,
                         onClose: {
                             withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
@@ -217,6 +218,7 @@ struct MilitaryOperationsView: View {
                     heading: arState.heading,
                     pins: arState.pins,
                     peers: arState.peers,
+                    walls: arState.walls,
                     scale: 90.0 / 2.0 / 8.0,
                     offset: .zero,
                     centerOnUser: true,
@@ -370,6 +372,7 @@ struct MilitaryOperationsView: View {
                     heading: arState.heading,
                     pins: arState.pins,
                     peers: arState.peers,
+                    walls: arState.walls,
                     scale: mapSize / 2.0 / 8.0,
                     offset: .zero,
                     centerOnUser: true,

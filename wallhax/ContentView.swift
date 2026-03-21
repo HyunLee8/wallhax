@@ -99,6 +99,7 @@ struct ContentView: View {
                             heading: arState.heading,
                             pins: arState.pins,
                             peers: arState.peers,
+                            walls: arState.walls,
                             accentColor: accentColor,
                             onTap: {
                                 withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
@@ -262,6 +263,7 @@ struct ContentView: View {
                     heading: arState.heading,
                     pins: arState.pins,
                     peers: arState.peers,
+                    walls: arState.walls,
                     accentColor: accentColor,
                     onClose: {
                         withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {

@@ -38,6 +38,8 @@ class NetworkingManager {
     var onPinReceived: ((SIMD3<Float>, String) -> Void)?
     var onConnectionChanged: ((Bool) -> Void)?
     var onTCPConnectionChanged: ((Bool) -> Void)?
+    var onAllWallsReceived: (([[String: Any]]) -> Void)?
+    var onPeerWallsReceived: ((String, [[String: Any]]) -> Void)?
 
     // MARK: - Init
 
@@ -137,6 +139,10 @@ class NetworkingManager {
                 self.sendUDP(jsonString)
             }
         }
+    }
+
+    func sendGetPlanes() {
+        sendTCPMessage(["type": "get_planes", "client_id": clientId])
     }
 
     func sendPlanes(_ planes: [[String: Any]]) {
@@ -346,11 +352,24 @@ class NetworkingManager {
                     return
                 }
 
-                if payload["type"] as? String == "pin",
-                   let posArray = payload["position"] as? [NSNumber], posArray.count == 3,
-                   let label = payload["label"] as? String {
-                    let position = SIMD3<Float>(posArray[0].floatValue, posArray[1].floatValue, posArray[2].floatValue)
-                    DispatchQueue.main.async { self.onPinReceived?(position, label) }
+                switch payload["type"] as? String {
+                case "pin":
+                    if let posArray = payload["position"] as? [NSNumber], posArray.count == 3,
+                       let label = payload["label"] as? String {
+                        let position = SIMD3<Float>(posArray[0].floatValue, posArray[1].floatValue, posArray[2].floatValue)
+                        DispatchQueue.main.async { self.onPinReceived?(position, label) }
+                    }
+                case "planes_all":
+                    if let planes = payload["planes"] as? [[String: Any]] {
+                        DispatchQueue.main.async { self.onAllWallsReceived?(planes) }
+                    }
+                case "planes":
+                    if let planes = payload["planes"] as? [[String: Any]],
+                       let peerId = payload["client_id"] as? String, peerId != self.clientId {
+                        DispatchQueue.main.async { self.onPeerWallsReceived?(peerId, planes) }
+                    }
+                default:
+                    break
                 }
             }
         }

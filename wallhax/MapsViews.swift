@@ -31,6 +31,7 @@ struct MapCanvas: View {
     let heading: Float
     let pins: [MapPin]
     let peers: [String: PeerMapState]
+    let walls: [WallSegment]
     let scale: CGFloat
     let offset: CGSize
     let centerOnUser: Bool
@@ -96,6 +97,16 @@ struct MapCanvas: View {
                     line.addLine(to: CGPoint(x: canvasSize.width, y: y))
                     context.stroke(line, with: .color(.white.opacity(0.06)), lineWidth: 0.5)
                 }
+            }
+
+            // Walls (vertical planes from peers)
+            for wall in walls {
+                let s = toScreen(wall.start)
+                let e = toScreen(wall.end)
+                var path = Path()
+                path.move(to: s)
+                path.addLine(to: e)
+                context.stroke(path, with: .color(.white.opacity(0.45)), lineWidth: showLabels ? 3 : 2)
             }
 
             // Peer trajectories and positions
@@ -173,6 +184,7 @@ struct MinimapView: View {
     let heading: Float
     let pins: [MapPin]
     let peers: [String: PeerMapState]
+    let walls: [WallSegment]
     let accentColor: Color
     let onTap: () -> Void
     let size: CGFloat = 140
@@ -184,6 +196,7 @@ struct MinimapView: View {
             heading: heading,
             pins: pins,
             peers: peers,
+            walls: walls,
             scale: 140.0 / 2.0 / 8.0,
             offset: .zero,
             centerOnUser: true,
@@ -219,6 +232,7 @@ struct FullMapView: View {
     let heading: Float
     let pins: [MapPin]
     let peers: [String: PeerMapState]
+    let walls: [WallSegment]
     let accentColor: Color
     let onClose: () -> Void
 
@@ -239,6 +253,7 @@ struct FullMapView: View {
                 heading: heading,
                 pins: pins,
                 peers: peers,
+                walls: walls,
                 scale: scale,
                 offset: CGSize(width: offset.width + dragOffset.width,
                                height: offset.height + dragOffset.height),
