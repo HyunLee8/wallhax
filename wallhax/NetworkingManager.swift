@@ -139,6 +139,14 @@ class NetworkingManager {
         }
     }
 
+    func sendPlanes(_ planes: [[String: Any]]) {
+        sendTCPMessage([
+            "type": "planes",
+            "client_id": clientId,
+            "planes": planes
+        ])
+    }
+
     func sendPin(position: SIMD3<Float>, label: String) {
         sendTCPMessage([
             "type": "pin",

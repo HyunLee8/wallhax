@@ -539,12 +539,18 @@ class Coordinator: NSObject, ARSessionDelegate {
     var pinAnchors: [UUID: AnchorEntity] = [:]
     var pinBobEntities: [UUID: (entity: Entity, phase: Float)] = [:]
     var subscriptions: [Any] = []
+    private var planeAnchors: [UUID: ARPlaneAnchor] = [:]
+    private var planeFrameCounter = 0
+    private let planeSendEveryN = 60
 
     init(isRecording: Binding<Bool>) {
         _isRecording = isRecording
     }
 
     func session(_ session: ARSession, didAdd anchors: [ARAnchor]) {
+        for anchor in anchors.compactMap({ $0 as? ARPlaneAnchor }) {
+            planeAnchors[anchor.identifier] = anchor
+        }
         for anchor in anchors.compactMap({ $0 as? ARImageAnchor }) {
             print("Detected image: \(anchor.referenceImage.name ?? "unknown")")
 
@@ -560,11 +566,46 @@ class Coordinator: NSObject, ARSessionDelegate {
             let anchorEntity = AnchorEntity(anchor: anchor)
             anchorEntity.addChild(entity)
             arView?.scene.addAnchor(anchorEntity)
-            session.setWorldOrigin(relativeTransform: anchor.transform)
+
+            let anchorMatrix = anchor.transform
+            let position = anchorMatrix.columns.3
+
+            var forward = simd_float3(anchorMatrix.columns.1.x, 0, anchorMatrix.columns.1.z)
+            if simd_length(forward) < 0.001 {
+                forward = simd_float3(anchorMatrix.columns.2.x, 0, anchorMatrix.columns.2.z)
+            }
+            forward = simd_normalize(forward)
+
+            let up = simd_float3(0, 1, 0)
+            let right = simd_normalize(simd_cross(up, forward))
+
+            var gravityAlignedMatrix = matrix_identity_float4x4
+            gravityAlignedMatrix.columns.0 = simd_float4(right, 0)
+            gravityAlignedMatrix.columns.1 = simd_float4(up, 0)
+            gravityAlignedMatrix.columns.2 = simd_float4(forward, 0)
+            gravityAlignedMatrix.columns.3 = position
+
+            session.setWorldOrigin(relativeTransform: gravityAlignedMatrix)
+        }
+    }
+
+    func session(_ session: ARSession, didUpdate anchors: [ARAnchor]) {
+        for anchor in anchors.compactMap({ $0 as? ARPlaneAnchor }) {
+            planeAnchors[anchor.identifier] = anchor
+        }
+    }
+
+    func session(_ session: ARSession, didRemove anchors: [ARAnchor]) {
+        for anchor in anchors.compactMap({ $0 as? ARPlaneAnchor }) {
+            planeAnchors.removeValue(forKey: anchor.identifier)
         }
     }
 
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
+        planeFrameCounter += 1
+        if planeFrameCounter % planeSendEveryN == 0 {
+            sendCurrentPlanes()
+        }
         NetworkingManager.shared.processFrame(frame)
         ARState.shared.update(frame: frame)
         if isRecording {
@@ -577,6 +618,30 @@ class Coordinator: NSObject, ARSessionDelegate {
             scnCameraNode.camera?.fieldOfView = CGFloat(2 * atan(Float(res.height) / (2 * fy)) * 180 / .pi)
             pruneStalePeerCylinders()
         }
+    }
+
+    // MARK: - Plane Streaming
+
+    private func sendCurrentPlanes() {
+        let planesData: [[String: Any]] = planeAnchors.values.map { anchor in
+            let t = anchor.transform
+            let c = anchor.center
+            let wc = t * SIMD4<Float>(c.x, c.y, c.z, 1)
+            let e = anchor.extent
+            return [
+                "id": anchor.identifier.uuidString,
+                "alignment": anchor.alignment == .horizontal ? "horizontal" : "vertical",
+                "center": [wc.x, wc.y, wc.z],
+                "extent": [e.x, e.z],
+                "transform": [
+                    t.columns.0.x, t.columns.0.y, t.columns.0.z, t.columns.0.w,
+                    t.columns.1.x, t.columns.1.y, t.columns.1.z, t.columns.1.w,
+                    t.columns.2.x, t.columns.2.y, t.columns.2.z, t.columns.2.w,
+                    t.columns.3.x, t.columns.3.y, t.columns.3.z, t.columns.3.w
+                ] as [Float]
+            ]
+        }
+        NetworkingManager.shared.sendPlanes(planesData)
     }
 
     // MARK: - Peer Avatars

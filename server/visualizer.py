@@ -10,6 +10,7 @@ import matplotlib
 matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
 from collections import deque
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
 MAX_TRAJECTORY_POINTS = 5000
 CLIENT_TIMEOUT = 3.0
@@ -64,11 +65,19 @@ class Visualizer:
         self._clients: dict[str, ClientState] = {}
         self._client_colors: dict[str, str] = {}
         self._pins: list[tuple[list, str]] = []
+        self._planes: dict[str, dict] = {}  # plane_id -> plane data (persistent)
         self._lock = threading.Lock()
 
     def add_pin(self, position: list, label: str):
         with self._lock:
             self._pins.append((position, label))
+
+    def update_planes(self, client_id: str, planes: list) -> None:
+        with self._lock:
+            for plane in planes:
+                pid = plane.get('id')
+                if pid:
+                    self._planes[pid] = {**plane, '_client_id': client_id}
 
     def update(self, client_id: str, position: list,
                tracking_state: str, origin_locked: bool):
@@ -101,6 +110,7 @@ class Visualizer:
             }
             client_colors = dict(self._client_colors)
             pins = list(self._pins)
+            planes_snapshot = dict(self._planes)
 
         ax, ax_top, ax_side, fig = self._ax, self._ax_top, self._ax_side, self._fig
 
@@ -114,8 +124,8 @@ class Visualizer:
         ax.zaxis.pane.set_edgecolor('#E8E8E8')
         ax.grid(True, alpha=0.3, color='#CCCCCC', linewidth=0.4)
         ax.set_xlabel('X (m)', fontsize=8, labelpad=8, color=C_LABEL)
-        ax.set_ylabel('Y (m)', fontsize=8, labelpad=8, color=C_LABEL)
-        ax.set_zlabel('Z (m)', fontsize=8, labelpad=8, color=C_LABEL)
+        ax.set_ylabel('Z (m)', fontsize=8, labelpad=8, color=C_LABEL)
+        ax.set_zlabel('Y (m)', fontsize=8, labelpad=8, color=C_LABEL)
         ax.tick_params(labelsize=7, colors='#AAAAAA')
 
         ax_top.cla()
@@ -145,10 +155,11 @@ class Visualizer:
                 any_locked = True
 
             if traj.shape[0] >= 2:
-                ax.plot(traj[:, 0], traj[:, 1], traj[:, 2],
+                ax.plot(traj[:, 0], traj[:, 2], traj[:, 1],
                         c=color, linewidth=1.8, alpha=0.9)
             if traj.shape[0] > 0:
-                ax.scatter(*traj[-1], c=color, s=60, edgecolors='white',
+                ax.scatter(traj[-1, 0], traj[-1, 2], traj[-1, 1],
+                           c=color, s=60, edgecolors='white',
                            linewidths=1.5, zorder=5, alpha=0.95)
                 all_trajs.append(traj)
 
@@ -168,10 +179,39 @@ class Visualizer:
             ax.scatter(0, 0, 0, c=C_ORIGIN, s=100, marker='^',
                        edgecolors='#2E7D32', linewidths=1.2, zorder=6)
 
+        for plane in planes_snapshot.values():
+            color = client_colors.get(plane.get('_client_id', ''), '#AAAAAA')
+            try:
+                t = np.array(plane['transform'], dtype=float).reshape(4, 4)
+                center = np.array(plane['center'], dtype=float)
+                extent = plane['extent']
+                half_w, half_h = extent[0] / 2, extent[1] / 2
+                x_axis = t[0, :3]
+                z_axis = t[2, :3]
+                corners = np.array([
+                    center + half_w * x_axis + half_h * z_axis,
+                    center + half_w * x_axis - half_h * z_axis,
+                    center - half_w * x_axis - half_h * z_axis,
+                    center - half_w * x_axis + half_h * z_axis,
+                ])
+                # swap Y↔Z for Y-up display in matplotlib 3D
+                corners_3d = corners[:, [0, 2, 1]]
+                alpha = 0.18 if plane.get('alignment') == 'horizontal' else 0.12
+                poly3d = Poly3DCollection([corners_3d], alpha=alpha,
+                                         facecolor=color, edgecolor=color,
+                                         linewidth=0.5, zorder=2)
+                ax.add_collection3d(poly3d)
+                ax_top.fill(corners[:, 0], corners[:, 2],
+                            color=color, alpha=alpha * 0.7, linewidth=0.4)
+                ax_side.fill(corners[:, 0], corners[:, 1],
+                             color=color, alpha=alpha * 0.7, linewidth=0.4)
+            except (KeyError, ValueError):
+                continue
+
         for pos, label in pins:
-            ax.scatter(pos[0], pos[1], pos[2], c='#FF9800', s=80, marker='v',
+            ax.scatter(pos[0], pos[2], pos[1], c='#FF9800', s=80, marker='v',
                        edgecolors='#E65100', linewidths=1.0, zorder=7)
-            ax.text(pos[0], pos[1], pos[2], f' {label}', fontsize=7, color='#FF9800')
+            ax.text(pos[0], pos[2], pos[1], f' {label}', fontsize=7, color='#FF9800')
             ax_top.scatter(pos[0], pos[2], c='#FF9800', s=40, marker='v',
                            edgecolors='#E65100', linewidths=0.8, zorder=7)
             ax_top.annotate(label, (pos[0], pos[2]), fontsize=6, color='#FF9800',
@@ -184,11 +224,11 @@ class Visualizer:
             mid = combined.mean(axis=0)
             span = max((combined.max(axis=0) - combined.min(axis=0)).max() / 2, 1.0)
             ax.set_xlim(mid[0] - span, mid[0] + span)
-            ax.set_ylim(mid[1] - span, mid[1] + span)
-            ax.set_zlim(mid[2] - span, mid[2] + span)
+            ax.set_ylim(mid[2] - span, mid[2] + span)  # ARKit Z → matplotlib Y
+            ax.set_zlim(mid[1] - span, mid[1] + span)  # ARKit Y → matplotlib Z
 
         n_clients = len(snapshot)
-        stats_str = f"Clients: {n_clients}  Path: {total_path:,}  Pins: {len(pins)}"
+        stats_str = f"Clients: {n_clients}  Path: {total_path:,}  Planes: {len(planes_snapshot)}  Pins: {len(pins)}"
         origin_str = "Origin: LOCKED" if any_locked else "Origin: searching"
 
         fig.text(0.05, 0.96, "WALLHAX", fontsize=14, fontweight='bold',

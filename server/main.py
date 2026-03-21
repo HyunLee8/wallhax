@@ -109,7 +109,9 @@ def _handle_tcp_client(conn: socket.socket, addr: tuple, tcp_sessions: TCPSessio
                 client_id = msg_client_id
                 tcp_sessions.register(client_id, conn)
 
-            if payload.get('type') == 'pin':
+            if payload.get('type') == 'planes':
+                vis.update_planes(client_id or '', payload.get('planes', []))
+            elif payload.get('type') == 'pin':
                 vis.add_pin(payload.get('position', [0, 0, 0]), payload.get('label', ''))
                 tcp_sessions.forward(client_id or '', data)
     except (ConnectionError, OSError):
