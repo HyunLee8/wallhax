@@ -2,6 +2,14 @@ import ARKit
 import Combine
 import SwiftUI
 
+private let peerTimeout: TimeInterval = 3.0
+
+struct PeerMapState {
+    var trajectory: [SIMD2<Float>]
+    var heading: Float
+    var lastSeen: Date
+}
+
 class ARState: ObservableObject {
     static let shared = ARState()
 
@@ -13,15 +21,29 @@ class ARState: ObservableObject {
     @Published var pins: [MapPin] = []
     @Published var distanceWalked: Float = 0
     @Published var isRelayConnected: Bool = NetworkingManager.shared.serverDiscovered
+    @Published var peers: [String: PeerMapState] = [:]
 
     private var lastPosition: SIMD3<Float>?
+    private var pruneTimer: Timer?
+
+    private init() {
+        pruneTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            self?.pruneStalePeers()
+        }
+    }
+
+    private func pruneStalePeers() {
+        let cutoff = Date().addingTimeInterval(-peerTimeout)
+        let stale = peers.keys.filter { peers[$0]!.lastSeen < cutoff }
+        guard !stale.isEmpty else { return }
+        for id in stale { peers.removeValue(forKey: id) }
+    }
 
     func update(frame: ARFrame) {
         let t = frame.camera.transform
         let pos = SIMD3<Float>(t.columns.3.x, t.columns.3.y, t.columns.3.z)
 
-        let forward = SIMD3<Float>(t.columns.2.x, 0, t.columns.2.z)
-        let yaw = atan2(forward.x, forward.z)
+        let yaw = atan2(-t.columns.2.x, -t.columns.2.z)
 
         if let last = lastPosition {
             let d = simd_distance(pos, last)
@@ -76,6 +98,26 @@ class ARState: ObservableObject {
         }
     }
 
+    func updatePeer(_ peerId: String, transform: simd_float4x4) {
+        let pos = SIMD2<Float>(transform.columns.3.x, transform.columns.3.z)
+        let yaw = atan2(-transform.columns.2.x, -transform.columns.2.z)
+        DispatchQueue.main.async {
+            var state = self.peers[peerId] ?? PeerMapState(trajectory: [], heading: 0, lastSeen: Date())
+            state.lastSeen = Date()
+            if let last = state.trajectory.last, simd_distance(pos, last) <= 0.01 {
+                state.heading = yaw
+                self.peers[peerId] = state
+                return
+            }
+            state.trajectory.append(pos)
+            if state.trajectory.count > 3000 {
+                state.trajectory = Array(state.trajectory.suffix(2000))
+            }
+            state.heading = yaw
+            self.peers[peerId] = state
+        }
+    }
+
     func reset() {
         DispatchQueue.main.async {
             self.position = .zero
@@ -84,6 +126,7 @@ class ARState: ObservableObject {
             self.featureCount = 0
             self.trajectory = []
             self.pins = []
+            self.peers = [:]
             self.distanceWalked = 0
             self.lastPosition = nil
         }

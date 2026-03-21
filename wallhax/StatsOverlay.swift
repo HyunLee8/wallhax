@@ -11,11 +11,9 @@ struct StatsOverlay: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            statRow("Frames", "\(frameCount)")
             statRow("Distance", String(format: "%.1fm", distance))
             statRow("Features", "\(features)")
             statRow("Pins", "\(pinCount)")
-            statRow("Time", formatTime(elapsed))
 
             HStack(spacing: 4) {
                 Circle()

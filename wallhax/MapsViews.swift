@@ -7,6 +7,22 @@ import SwiftUI
 import ARKit
 
 
+// MARK: - Peer Colors
+
+private let peerPalette: [Color] = [
+    Color(red: 0.91, green: 0.40, blue: 0.35),
+    Color(red: 0.36, green: 0.56, blue: 0.84),
+    Color(red: 0.67, green: 0.28, blue: 0.74),
+    Color(red: 0.15, green: 0.78, blue: 0.85),
+    Color(red: 1.0,  green: 0.44, blue: 0.26),
+    Color(red: 0.55, green: 0.76, blue: 0.29),
+]
+
+private func peerColor(for peerId: String) -> Color {
+    peerPalette[abs(peerId.hashValue) % peerPalette.count]
+}
+
+
 // MARK: - Map Canvas
 
 struct MapCanvas: View {
@@ -14,6 +30,7 @@ struct MapCanvas: View {
     let currentPos: SIMD2<Float>
     let heading: Float
     let pins: [MapPin]
+    let peers: [String: PeerMapState]
     let scale: CGFloat
     let offset: CGSize
     let centerOnUser: Bool
@@ -45,6 +62,21 @@ struct MapCanvas: View {
                 return CGPoint(x: x, y: y)
             }
 
+            func drawTriangle(at cp: CGPoint, heading h: Float, size triSize: CGFloat, color: Color) {
+                var tri = Path()
+                let tipX = cp.x + sin(CGFloat(h)) * triSize
+                let tipY = cp.y + cos(CGFloat(h)) * triSize
+                let leftX = cp.x + sin(CGFloat(h) + 2.4) * triSize * 0.6
+                let leftY = cp.y + cos(CGFloat(h) + 2.4) * triSize * 0.6
+                let rightX = cp.x + sin(CGFloat(h) - 2.4) * triSize * 0.6
+                let rightY = cp.y + cos(CGFloat(h) - 2.4) * triSize * 0.6
+                tri.move(to: CGPoint(x: tipX, y: tipY))
+                tri.addLine(to: CGPoint(x: leftX, y: leftY))
+                tri.addLine(to: CGPoint(x: rightX, y: rightY))
+                tri.closeSubpath()
+                context.fill(tri, with: .color(color))
+            }
+
             // Grid
             let gridSpacing = scale * 1.0
             if gridSpacing > 8 {
@@ -66,7 +98,26 @@ struct MapCanvas: View {
                 }
             }
 
-            // Trajectory
+            // Peer trajectories and positions
+            let peerTriSize: CGFloat = showLabels ? 10 : 7
+            for (peerId, peer) in peers {
+                let color = peerColor(for: peerId)
+                let traj = peer.trajectory
+                if traj.count >= 2 {
+                    var path = Path()
+                    for (i, pt) in traj.enumerated() {
+                        let sp = toScreen(pt)
+                        if i == 0 { path.move(to: sp) }
+                        else { path.addLine(to: sp) }
+                    }
+                    context.stroke(path, with: .color(color.opacity(0.5)), lineWidth: showLabels ? 2.0 : 1.2)
+                }
+                if let lastPt = traj.last {
+                    drawTriangle(at: toScreen(lastPt), heading: peer.heading, size: peerTriSize, color: color)
+                }
+            }
+
+            // Local trajectory
             if trajectory.count >= 2 {
                 var path = Path()
                 for (i, pt) in trajectory.enumerated() {
@@ -93,21 +144,10 @@ struct MapCanvas: View {
                 }
             }
 
-            // Current position triangle
+            // Local position triangle
             let triSize: CGFloat = showLabels ? 12 : 8
             let cp = toScreen(SIMD2<Float>(currentPos.x, currentPos.y))
-            var tri = Path()
-            let tipX = cp.x + sin(CGFloat(heading)) * triSize
-            let tipY = cp.y + cos(CGFloat(heading)) * triSize
-            let leftX = cp.x + sin(CGFloat(heading) + 2.4) * triSize * 0.6
-            let leftY = cp.y + cos(CGFloat(heading) + 2.4) * triSize * 0.6
-            let rightX = cp.x + sin(CGFloat(heading) - 2.4) * triSize * 0.6
-            let rightY = cp.y + cos(CGFloat(heading) - 2.4) * triSize * 0.6
-            tri.move(to: CGPoint(x: tipX, y: tipY))
-            tri.addLine(to: CGPoint(x: leftX, y: leftY))
-            tri.addLine(to: CGPoint(x: rightX, y: rightY))
-            tri.closeSubpath()
-            context.fill(tri, with: .color(.white))
+            drawTriangle(at: cp, heading: heading, size: triSize, color: .white)
         }
     }
 }
@@ -120,6 +160,7 @@ struct MinimapView: View {
     let currentPos: SIMD2<Float>
     let heading: Float
     let pins: [MapPin]
+    let peers: [String: PeerMapState]
     let accentColor: Color
     let onTap: () -> Void
     let size: CGFloat = 140
@@ -130,6 +171,7 @@ struct MinimapView: View {
             currentPos: currentPos,
             heading: heading,
             pins: pins,
+            peers: peers,
             scale: 140.0 / 2.0 / 8.0,
             offset: .zero,
             centerOnUser: true,
@@ -164,6 +206,7 @@ struct FullMapView: View {
     let currentPos: SIMD2<Float>
     let heading: Float
     let pins: [MapPin]
+    let peers: [String: PeerMapState]
     let accentColor: Color
     let onClose: () -> Void
 
@@ -183,6 +226,7 @@ struct FullMapView: View {
                 currentPos: currentPos,
                 heading: heading,
                 pins: pins,
+                peers: peers,
                 scale: scale,
                 offset: CGSize(width: offset.width + dragOffset.width,
                                height: offset.height + dragOffset.height),

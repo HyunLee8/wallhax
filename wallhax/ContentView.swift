@@ -2,6 +2,7 @@ import SwiftUI
 import Combine
 import RealityKit
 import ARKit
+import SceneKit
 
 // MARK: - Main Content View
 
@@ -77,6 +78,7 @@ struct ContentView: View {
                             currentPos: SIMD2<Float>(arState.position.x, arState.position.z),
                             heading: arState.heading,
                             pins: arState.pins,
+                            peers: arState.peers,
                             accentColor: accentColor,
                             onTap: {
                                 withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
@@ -238,6 +240,7 @@ struct ContentView: View {
                     currentPos: SIMD2<Float>(arState.position.x, arState.position.z),
                     heading: arState.heading,
                     pins: arState.pins,
+                    peers: arState.peers,
                     accentColor: accentColor,
                     onClose: {
                         withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
@@ -437,14 +440,31 @@ struct ARViewContainer: UIViewRepresentable {
         arView.session.delegate = context.coordinator
         context.coordinator.arView = arView
 
-        let peersAnchor = AnchorEntity(world: .zero)
-        arView.scene.addAnchor(peersAnchor)
-        context.coordinator.peersAnchor = peersAnchor
+        let scnView = SCNView(frame: arView.bounds)
+        scnView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        scnView.backgroundColor = .clear
+        scnView.isOpaque = false
+        scnView.rendersContinuously = true
+        scnView.isUserInteractionEnabled = false
+        scnView.allowsCameraControl = false
+        scnView.autoenablesDefaultLighting = true
+        let scnScene = SCNScene()
+        scnView.scene = scnScene
+        let cameraNode = SCNNode()
+        cameraNode.camera = SCNCamera()
+        cameraNode.camera?.zNear = 0.01
+        cameraNode.camera?.zFar = 100
+        scnScene.rootNode.addChildNode(cameraNode)
+        scnView.pointOfView = cameraNode
+        context.coordinator.scnView = scnView
+        context.coordinator.scnCameraNode = cameraNode
+        arView.addSubview(scnView)
 
         let coordinator = context.coordinator
 
         NetworkingManager.shared.onPeerTransformReceived = { [weak coordinator] peerId, transform in
             coordinator?.updatePeer(peerId, transform: transform)
+            ARState.shared.updatePeer(peerId, transform: transform)
         }
 
         NetworkingManager.shared.onPinReceived = { position, label in
@@ -493,8 +513,9 @@ struct ARViewContainer: UIViewRepresentable {
 class Coordinator: NSObject, ARSessionDelegate {
     weak var arView: ARView?
     @Binding var isRecording: Bool
-    var peersAnchor: AnchorEntity?
-    var peerEntities: [String: ModelEntity] = [:]
+    var scnView: SCNView?
+    var scnCameraNode = SCNNode()
+    var peerCylinders: [String: SCNNode] = [:]
     var pinAnchors: [UUID: AnchorEntity] = [:]
     var pinBobEntities: [UUID: (entity: Entity, phase: Float)] = [:]
     var subscriptions: [Any] = []
@@ -529,22 +550,41 @@ class Coordinator: NSObject, ARSessionDelegate {
         if isRecording {
             SnapshotManager.shared.processFrame(frame)
         }
+        if scnView != nil {
+            scnCameraNode.simdTransform = frame.camera.transform
+            let res = frame.camera.imageResolution
+            let fy = frame.camera.intrinsics.columns.1.y
+            scnCameraNode.camera?.fieldOfView = CGFloat(2 * atan(Float(res.height) / (2 * fy)) * 180 / .pi)
+            pruneStalePeerCylinders()
+        }
     }
 
     // MARK: - Peer Avatars
 
     func updatePeer(_ peerId: String, transform: simd_float4x4) {
-        guard let anchor = peersAnchor else { return }
-
-        if peerEntities[peerId] == nil {
-            let sphere = ModelEntity(
-                mesh: .generateSphere(radius: 0.05),
-                materials: [SimpleMaterial(color: .red, isMetallic: false)]
-            )
-            anchor.addChild(sphere)
-            peerEntities[peerId] = sphere
+        guard let scene = scnView?.scene else { return }
+        if peerCylinders[peerId] == nil {
+            let cylinder = SCNCylinder(radius: 0.06, height: 0.5)
+            let material = SCNMaterial()
+            material.diffuse.contents = UIColor(red: 0.3, green: 0.8, blue: 1.0, alpha: 0.85)
+            material.emission.contents = UIColor(red: 0.1, green: 0.4, blue: 0.8, alpha: 0.5)
+            material.readsFromDepthBuffer = false
+            material.writesToDepthBuffer = false
+            material.isDoubleSided = true
+            cylinder.materials = [material]
+            let node = SCNNode(geometry: cylinder)
+            scene.rootNode.addChildNode(node)
+            peerCylinders[peerId] = node
         }
-        peerEntities[peerId]!.transform = Transform(matrix: transform)
+        peerCylinders[peerId]!.simdTransform = transform
+    }
+
+    private func pruneStalePeerCylinders() {
+        let activeIds = Set(ARState.shared.peers.keys)
+        for id in Array(peerCylinders.keys) where !activeIds.contains(id) {
+            peerCylinders[id]?.removeFromParentNode()
+            peerCylinders.removeValue(forKey: id)
+        }
     }
 
     // MARK: - Pin Placement via Raycast
