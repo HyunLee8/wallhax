@@ -6,6 +6,7 @@ import Combine
 
 struct MilitaryOperationsView: View {
     let useCase: UseCase
+    let callsign: String
     let onExit: () -> Void
 
     @StateObject private var arState = ARState.shared
@@ -177,6 +178,20 @@ struct MilitaryOperationsView: View {
 
             stripDivider
 
+            // Callsign nameplate
+            VStack(alignment: .leading, spacing: 1) {
+                Text("OP")
+                    .font(.system(size: 6, weight: .regular, design: .monospaced))
+                    .tracking(2)
+                    .foregroundColor(hueDim)
+                Text(callsign.uppercased())
+                    .font(.system(size: 10, weight: .black, design: .monospaced))
+                    .foregroundColor(hue)
+                    .tracking(1)
+            }
+
+            stripDivider
+
             // DTG
             Text(zuluTime)
                 .font(.system(size: 12, weight: .black, design: .monospaced))
@@ -303,6 +318,27 @@ struct MilitaryOperationsView: View {
                 .foregroundColor(.yellow.opacity(0.75))
 
             Spacer()
+
+            // Callsign nameplate
+            HStack(spacing: 5) {
+                Rectangle().fill(hue.opacity(0.5)).frame(width: 2, height: 14)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("OP")
+                        .font(.system(size: 6, weight: .regular, design: .monospaced))
+                        .tracking(2)
+                        .foregroundColor(hueDim)
+                    Text(callsign.uppercased())
+                        .font(.system(size: compact ? 10 : 12, weight: .black, design: .monospaced))
+                        .foregroundColor(hue)
+                        .tracking(1)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(hue.opacity(0.08))
+            .overlay(Rectangle().stroke(hue.opacity(0.25), lineWidth: 1))
+
+            Rectangle().fill(hue.opacity(0.25)).frame(width: 1, height: 18).padding(.horizontal, 8)
 
             VStack(alignment: .trailing, spacing: 1) {
                 Text(zuluTime)

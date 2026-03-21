@@ -8,6 +8,7 @@ import SceneKit
 
 struct ContentView: View {
     let useCase: UseCase
+    let callsign: String
     let onExit: () -> Void
 
     @StateObject private var arState = ARState.shared
@@ -52,25 +53,44 @@ struct ContentView: View {
                 HStack(alignment: .top, spacing: 10) {
                     // Back button + minimap stacked
                     VStack(alignment: .leading, spacing: 8) {
-                        Button(action: {
-                            ARState.shared.reset()
-                            onExit()
-                        }) {
-                            HStack(spacing: 5) {
-                                Image(systemName: "chevron.left")
-                                    .font(.system(size: 10, weight: .bold))
-                                Circle()
-                                    .fill(accentColor)
-                                    .frame(width: 5, height: 5)
-                                Text(useCase.title)
-                                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        HStack(spacing: 8) {
+                            Button(action: {
+                                ARState.shared.reset()
+                                onExit()
+                            }) {
+                                HStack(spacing: 5) {
+                                    Image(systemName: "chevron.left")
+                                        .font(.system(size: 10, weight: .bold))
+                                    Circle()
+                                        .fill(accentColor)
+                                        .frame(width: 5, height: 5)
+                                    Text(useCase.title)
+                                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                                }
+                                .foregroundColor(.white.opacity(0.9))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(Color.black.opacity(0.55))
+                                .clipShape(Capsule())
+                                .overlay(Capsule().stroke(Color.white.opacity(0.1), lineWidth: 1))
                             }
-                            .foregroundColor(.white.opacity(0.9))
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(Color.black.opacity(0.55))
-                            .clipShape(Capsule())
-                            .overlay(Capsule().stroke(Color.white.opacity(0.1), lineWidth: 1))
+
+                            // Callsign nameplate
+                            if !callsign.isEmpty {
+                                HStack(spacing: 5) {
+                                    Image(systemName: "person.fill")
+                                        .font(.system(size: 8, weight: .semibold))
+                                        .foregroundColor(accentColor)
+                                    Text(callsign)
+                                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                                        .foregroundColor(.white.opacity(0.9))
+                                }
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(Color.black.opacity(0.55))
+                                .clipShape(Capsule())
+                                .overlay(Capsule().stroke(accentColor.opacity(0.35), lineWidth: 1))
+                            }
                         }
 
                         MinimapView(
