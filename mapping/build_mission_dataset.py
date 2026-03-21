@@ -28,13 +28,13 @@ def parse_xmp(xmp_path):
 
     # Parse intrinsics
     intrinsics = {
-        "w": "float(desc.find('tiff:ImageWidth', ns).text)",
-        "h": "float(desc.find('tiff:ImageLength', ns).text)",
-        "fx": "float(desc.find('tiff:ImageLength', ns).text)",
-        "fy": "float(desc.find('tiff:ImageLength', ns).text)",
-        "cx": "float(desc.find('tiff:ImageLength', ns).text)",
-        "cy": "float(desc.find('tiff:ImageLength', ns).text)",
-    }
+        "w": float(desc.find('tiff:ImageWidth', ns).text),
+        "h": float(desc.find('tiff:ImageLength', ns).text),
+        "fl_x": float(desc.find('camera:FocalLengthX', ns).text),
+        "fl_y": float(desc.find('camera:FocalLengthY', ns).text),
+        "cx": float(desc.find('camera:PrincipalPointX', ns).text),
+        "cy": float(desc.find('camera:PrincipalPointY', ns).text)
+    }  
 
     # Parse 4x4 matrix
     matrix_str = desc.find('pose:TransformMatrix', ns).text
@@ -113,16 +113,16 @@ def main():
     if not frames_data:
         print("Failed to find any valid image/XMP pairs.")
         return
-    
+
     transforms = {
         "w": global_intrinsics['w'],
         "h": global_intrinsics['h'],
-        "fx": global_intrinsics['fx'],
-        "fy": global_intrinsics['fy'],
+        "fl_x": global_intrinsics['fl_x'],
+        "fl_y": global_intrinsics['fl_y'],
         "cx": global_intrinsics['cx'],
         "cy": global_intrinsics['cy'],
         "camera_model": "OPENCV",
-        "frames": frames_data
+        "frames": frames_data,
     }
 
     json_out = os.path.join(out_dir, 'transforms.json')
