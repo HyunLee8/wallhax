@@ -28,13 +28,7 @@ struct RootView: View {
                 .transition(.opacity)
 
             case .operational(let useCase):
-                Group {
-                    if useCase.id == "military" {
-                        MilitaryOperationsView(useCase: useCase, callsign: savedCallsign, onExit: exit)
-                    } else {
-                        ContentView(useCase: useCase, callsign: savedCallsign, onExit: exit)
-                    }
-                }
+                MilitaryOperationsView(useCase: useCase, callsign: savedCallsign, onExit: exit)
                 .transition(.asymmetric(
                     insertion: .opacity.combined(with: .scale(scale: 1.03)),
                     removal: .opacity

@@ -22,7 +22,7 @@ from visualizer import Visualizer
 
 UDP_PORT = 9876
 TCP_EVENT_PORT = 9878
-CLIENT_TIMEOUT = 3.0
+CLIENT_TIMEOUT = 30.0
 
 
 class PlanesStore:

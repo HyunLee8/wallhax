@@ -39,7 +39,7 @@ struct UseCaseSelectionView: View {
                         .font(.system(size: 34, weight: .bold, design: .rounded))
                         .foregroundColor(.white)
 
-                    Text("Select your operational mode")
+                    Text("Tactical AR Mapping")
                         .font(.system(size: 15, weight: .medium, design: .rounded))
                         .foregroundColor(.white.opacity(0.5))
                 }
@@ -128,22 +128,32 @@ struct UseCaseSelectionView: View {
                 .opacity(headerVisible ? 1 : 0)
                 .padding(.bottom, 24)
 
-                // Cards
-                VStack(spacing: 14) {
-                    ForEach(Array(UseCase.allCases.enumerated()), id: \.offset) { index, useCase in
-                        UseCaseCard(useCase: useCase) {
-                            onSelect(useCase)
-                        }
-                        .opacity(cardsVisible ? 1 : 0)
-                        .offset(y: cardsVisible ? 0 : 24)
-                        .animation(
-                            .spring(response: 0.45, dampingFraction: 0.88)
-                                .delay(Double(index) * 0.08),
-                            value: cardsVisible
-                        )
+                // Enter button
+                Button(action: { onSelect(.military) }) {
+                    HStack(spacing: 14) {
+                        Image(systemName: "shield.fill")
+                            .font(.system(size: 20, weight: .semibold))
+                        Text("ENTER")
+                            .font(.system(size: 18, weight: .bold, design: .monospaced))
+                            .tracking(2)
                     }
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 18)
+                    .background(
+                        RoundedRectangle(cornerRadius: 16)
+                            .fill(Color(red: 0.60, green: 0.62, blue: 0.66).opacity(0.25))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 16)
+                                    .stroke(Color(red: 0.60, green: 0.62, blue: 0.66).opacity(0.5), lineWidth: 1)
+                            )
+                    )
                 }
+                .buttonStyle(ScaleButtonStyle())
                 .padding(.horizontal, 20)
+                .opacity(cardsVisible ? 1 : 0)
+                .offset(y: cardsVisible ? 0 : 24)
+                .animation(.spring(response: 0.45, dampingFraction: 0.88).delay(0.08), value: cardsVisible)
 
                 Spacer()
 

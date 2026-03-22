@@ -2,7 +2,7 @@ import SwiftUI
 
 struct PinSheet: View {
     @Binding var isPresented: Bool
-    let pinLabels: [(label: String, icon: String)]
+    let pinLabels: [(label: String, icon: String, color: Color)]
     let accentColor: Color
     let onDrop: (String) -> Void
 
@@ -50,7 +50,7 @@ struct PinSheet: View {
                         VStack(spacing: 6) {
                             Image(systemName: item.icon)
                                 .font(.system(size: 16))
-                                .foregroundColor(accentColor)
+                                .foregroundColor(item.color)
                             Text(item.label)
                                 .font(.system(size: 11, weight: .medium, design: .rounded))
                                 .foregroundColor(.white.opacity(0.85))
