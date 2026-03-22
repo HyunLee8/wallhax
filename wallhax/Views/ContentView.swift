@@ -630,7 +630,8 @@ class Coordinator: NSObject, ARSessionDelegate {
     var scnCameraNode = SCNNode()
     var peerNodes: [String: SCNNode] = [:]       // legacy, kept for compatibility
     var peerAnchors: [String: AnchorEntity] = [:]  // RealityKit peer figures
-    var peerFigures: [String: Entity] = [:]          // The stick figure entity per peer
+    var peerFigures: [String: Entity] = [:]          // The solid stick figure entity per peer
+    var peerOutlines: [String: Entity] = [:]         // Dashed wireframe shown when occluded
     var peerNameplates: [String: Entity] = [:]       // Nameplate text above peer heads
     var peerCallsigns: [String: String] = [:]        // Cached callsign per peer
     var peerOccluded: [String: Bool] = [:]           // Whether peer is behind a wall/floor
@@ -801,13 +802,19 @@ class Coordinator: NSObject, ARSessionDelegate {
             // Shift figure down so head aligns with peer's camera (phone) position
             figure.position.y = -0.80
             anchor.addChild(figure)
+            let outline = PeerModel.makeOutlineEntity(color: UIColor(red: 0.3, green: 0.8, blue: 1.0, alpha: 0.85))
+            outline.position.y = -0.80
+            outline.isEnabled = false  // hidden initially
+            anchor.addChild(outline)
             arView.scene.addAnchor(anchor)
             peerAnchors[peerId] = anchor
             peerFigures[peerId] = figure
+            peerOutlines[peerId] = outline
         }
 
         // Add or update nameplate
         if !callsign.isEmpty && callsign != peerCallsigns[peerId] {
+            print("[Nameplate] Creating nameplate for peer \(peerId.prefix(8)): '\(callsign)'")
             // Remove old nameplate
             peerNameplates[peerId]?.removeFromParent()
             let nameplateContainer = Entity()
@@ -824,8 +831,23 @@ class Coordinator: NSObject, ARSessionDelegate {
         let pos = SIMD3<Float>(transform.columns.3.x, transform.columns.3.y, transform.columns.3.z)
         let yaw = atan2(-transform.columns.2.x, -transform.columns.2.z)
 
+        // Extract pitch from transform (angle the phone is tilted up/down)
+        let fwd = SIMD3<Float>(-transform.columns.2.x, -transform.columns.2.y, -transform.columns.2.z)
+        let pitch = asin(max(-1, min(1, fwd.y))) // positive = looking up
+
         anchor.position = pos
         anchor.orientation = simd_quatf(angle: yaw, axis: [0, 1, 0])
+
+        // Estimate height above floor and apply pose
+        let cameraHeight: Float
+        if let floorY = estimatedFloorY {
+            cameraHeight = pos.y - floorY
+        } else {
+            cameraHeight = 1.6 // assume standing if no floor detected
+        }
+        if let figure = peerFigures[peerId] {
+            PeerModel.applyPose(to: figure, pitch: pitch, heightAboveFloor: cameraHeight)
+        }
 
         // Billboard the nameplate toward the camera
         if let cameraTransform = arView.session.currentFrame?.camera.transform {
@@ -838,13 +860,12 @@ class Coordinator: NSObject, ARSessionDelegate {
                 nameplate.orientation = simd_quatf(angle: billboardYaw - yaw, axis: [0, 1, 0])
             }
 
-            // Check occlusion and swap materials
+            // Check occlusion and swap between solid figure and dashed outline
             let occluded = isPeerOccluded(cameraPos: camPos, peerPos: pos)
             if occluded != (peerOccluded[peerId] ?? false) {
                 peerOccluded[peerId] = occluded
-                if let figure = peerFigures[peerId] {
-                    applyMaterials(figure, color: UIColor(red: 0.3, green: 0.8, blue: 1.0, alpha: 0.85), occluded: occluded)
-                }
+                peerFigures[peerId]?.isEnabled = !occluded
+                peerOutlines[peerId]?.isEnabled = occluded
                 if let nameplate = peerNameplates[peerId] {
                     applyMaterials(nameplate, color: .white, occluded: occluded)
                 }
@@ -855,15 +876,9 @@ class Coordinator: NSObject, ARSessionDelegate {
     private func applyMaterials(_ entity: Entity, color: UIColor, occluded: Bool) {
         for child in entity.children {
             if let model = child as? ModelEntity {
-                if occluded {
-                    var mat = UnlitMaterial()
-                    mat.color = .init(tint: color.withAlphaComponent(0.2))
-                    model.model?.materials = [mat]
-                } else {
-                    var mat = SimpleMaterial()
-                    mat.color = .init(tint: color)
-                    model.model?.materials = [mat]
-                }
+                var mat = UnlitMaterial()
+                mat.color = .init(tint: occluded ? color.withAlphaComponent(0.2) : color)
+                model.model?.materials = [mat]
             }
             applyMaterials(child, color: color, occluded: occluded)
         }
@@ -923,6 +938,7 @@ class Coordinator: NSObject, ARSessionDelegate {
             peerAnchors[id]?.removeFromParent()
             peerAnchors.removeValue(forKey: id)
             peerFigures.removeValue(forKey: id)
+            peerOutlines.removeValue(forKey: id)
             peerNameplates.removeValue(forKey: id)
             peerCallsigns.removeValue(forKey: id)
             peerOccluded.removeValue(forKey: id)
