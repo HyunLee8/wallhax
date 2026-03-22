@@ -79,7 +79,7 @@ export default function App() {
         </group>
 
         <lumaSplats
-          source="https://lumalabs.ai/capture/YOUR_URL_HERE"
+          source="https://lumalabs.ai/embed/18f57320-0faf-41c3-a1d8-08a11f92c9bd"
           position={[0, 0, 0]}
         />
 
