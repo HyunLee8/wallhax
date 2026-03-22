@@ -162,7 +162,9 @@ struct MilitaryOperationsView: View {
                 HStack(spacing: 14) {
                     pip(trackingColor, "TRK")
                     pip(arState.isRelayConnected ? gray : red,
-                        arState.isRelayConnected ? "NET" : "NET\u{2009}\u{2717}")
+                        arState.isRelayConnected ? "UDP" : "UDP\u{2009}\u{2717}")
+                    pip(arState.isTCPConnected ? gray : red,
+                        arState.isTCPConnected ? "TCP" : "TCP\u{2009}\u{2717}")
                     if isRecording {
                         pip(blinkOn ? red : red.opacity(0.15), "REC \(fmtTime(elapsed))")
                     }

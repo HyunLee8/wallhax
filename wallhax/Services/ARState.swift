@@ -36,6 +36,7 @@ class ARState: ObservableObject {
     @Published var pins: [MapPin] = []
     @Published var distanceWalked: Float = 0
     @Published var isRelayConnected: Bool = NetworkingManager.shared.serverDiscovered
+    @Published var isTCPConnected: Bool = NetworkingManager.shared.tcpConnected
     @Published var peers: [String: PeerMapState] = [:]
     @Published var walls: [Wall3D] = []
     @Published var floors: [HFloor] = []
@@ -54,6 +55,7 @@ class ARState: ObservableObject {
         }
 
         NetworkingManager.shared.onTCPConnectionChanged = { [weak self] connected in
+            DispatchQueue.main.async { self?.isTCPConnected = connected }
             guard connected else { return }
             NetworkingManager.shared.sendGetPlanes()
         }
