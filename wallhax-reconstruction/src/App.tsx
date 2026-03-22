@@ -254,10 +254,16 @@ function CameraFitTrajectory({
 }) {
   const { camera } = useThree()
 
-  useEffect(() => {
-    if (trajectory.length === 0 || !orbitRef.current) return
-    fitCameraToTrajectory(camera, orbitRef.current, trajectory, matrix)
-  }, [trajectory, matrix, camera, orbitRef])
+  // Auto-fit only when trajectory data arrives or changes — not when alignment sliders update `matrix`,
+  // so nudging the path does not snap the camera. Use Fit view for a deliberate refit.
+  useEffect(
+    () => {
+      if (trajectory.length === 0 || !orbitRef.current) return
+      fitCameraToTrajectory(camera, orbitRef.current, trajectory, matrix)
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- omit `matrix`: alignment tweaks must not refit
+    [trajectory, camera, orbitRef],
+  )
 
   return null
 }
@@ -539,7 +545,7 @@ export default function App() {
           <div className="timeline__row">
             <span className="timeline__label">TIMELINE</span>
             <span className="timeline__frame">
-              T-MARK <strong>{currentFrame}</strong> / {lastFrame}
+              FRAME <strong>{currentFrame}</strong> / {lastFrame}
             </span>
           </div>
           <div className="timeline__playback">
