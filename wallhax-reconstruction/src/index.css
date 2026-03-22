@@ -229,7 +229,7 @@ body {
 .calibration {
   top: 1rem;
   right: 1rem;
-  width: min(320px, calc(100vw - 2rem));
+  width: min(400px, calc(100vw - 2rem));
 }
 
 .calibration__card {
@@ -274,7 +274,7 @@ body {
 
 .calibration__row {
   display: grid;
-  grid-template-columns: 72px 1fr;
+  grid-template-columns: 64px 1fr 4.75rem;
   align-items: center;
   gap: 0.35rem;
   font-size: 0.68rem;
@@ -283,7 +283,28 @@ body {
 
 .calibration__row input[type='range'] {
   width: 100%;
+  min-width: 0;
   accent-color: var(--accent);
+}
+
+.calibration__number {
+  width: 100%;
+  min-width: 0;
+  font-family: inherit;
+  font-size: 0.65rem;
+  padding: 0.28rem 0.4rem;
+  background: rgba(0, 20, 30, 0.85);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  text-align: right;
+  -moz-appearance: textfield;
+}
+
+.calibration__number::-webkit-outer-spin-button,
+.calibration__number::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }
 
 .calibration__actions {

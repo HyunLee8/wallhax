@@ -12,6 +12,33 @@ extend({ LumaSplats: LumaSplatsThree })
 
 const ALIGNMENT_STORAGE_KEY = 'wallhax.arkitAlignment'
 
+/** Uniform scale for ARKit path vs fixed Luma splat (multiplied with Alignment → Scale). */
+const TRAJECTORY_EXTENT_SCALE = 1.75
+
+const ALIGN_POS_MIN = -40
+const ALIGN_POS_MAX = 40
+const ALIGN_POS_SLIDER_STEP = 0.05
+const ALIGN_POS_NUMBER_STEP = 0.001
+
+const ALIGN_ROT_MIN = -360
+const ALIGN_ROT_MAX = 360
+const ALIGN_ROT_SLIDER_STEP = 0.5
+const ALIGN_ROT_NUMBER_STEP = 0.01
+
+const ALIGN_SCALE_MIN = 0.05
+const ALIGN_SCALE_MAX = 12
+const ALIGN_SCALE_SLIDER_STEP = 0.05
+const ALIGN_SCALE_NUMBER_STEP = 0.001
+
+function clamp(n: number, min: number, max: number): number {
+  if (!Number.isFinite(n)) return min
+  return Math.min(max, Math.max(min, n))
+}
+
+function clampVec3(v: [number, number, number], min: number, max: number): [number, number, number] {
+  return [clamp(v[0], min, max), clamp(v[1], min, max), clamp(v[2], min, max)]
+}
+
 function defaultAlignment(): ArkAlignment {
   return { position: [0, 0, 0], rotationDeg: [0, 0, 0], scale: 1 }
 }
@@ -22,9 +49,17 @@ function loadAlignment(): ArkAlignment {
     if (!raw) return defaultAlignment()
     const p = JSON.parse(raw) as Partial<ArkAlignment>
     return {
-      position: (p.position ?? [0, 0, 0]) as [number, number, number],
-      rotationDeg: (p.rotationDeg ?? [0, 0, 0]) as [number, number, number],
-      scale: typeof p.scale === 'number' && Number.isFinite(p.scale) ? p.scale : 1,
+      position: clampVec3((p.position ?? [0, 0, 0]) as [number, number, number], ALIGN_POS_MIN, ALIGN_POS_MAX),
+      rotationDeg: clampVec3(
+        (p.rotationDeg ?? [0, 0, 0]) as [number, number, number],
+        ALIGN_ROT_MIN,
+        ALIGN_ROT_MAX,
+      ),
+      scale: clamp(
+        typeof p.scale === 'number' && Number.isFinite(p.scale) ? p.scale : 1,
+        ALIGN_SCALE_MIN,
+        ALIGN_SCALE_MAX,
+      ),
     }
   } catch {
     return defaultAlignment()
@@ -49,6 +84,12 @@ function alignmentMatrix(alignment: ArkAlignment): THREE.Matrix4 {
     new THREE.Vector3(alignment.scale, alignment.scale, alignment.scale),
   )
   return m
+}
+
+/** Applies TRAJECTORY_EXTENT_SCALE so path, dot, and camera fit use the same scale as the group. */
+function alignmentWithPathExtent(alignment: ArkAlignment): ArkAlignment {
+  const s = alignment.scale * TRAJECTORY_EXTENT_SCALE
+  return { ...alignment, scale: s }
 }
 
 function transformTrajectoryPoint(p: TrajectoryPoint, matrix: THREE.Matrix4): THREE.Vector3 {
@@ -212,7 +253,7 @@ const TrajectoryTube = ({ pathData, currentFrame }: TrajectoryProps) => {
 
   return (
     <mesh renderOrder={1000}>
-      <tubeGeometry args={[curve, 200, 0.012, 8, false]} />
+      <tubeGeometry args={[curve, 200, 0.12, 8, false]} />
       <meshStandardMaterial
         color="#00ffff"
         emissive="#00ffff"
@@ -232,7 +273,7 @@ const CurrentLocationMarker = ({ pathData, currentFrame }: TrajectoryProps) => {
 
   return (
     <mesh position={[currentPos.x, currentPos.y, currentPos.z]} renderOrder={1001}>
-      <sphereGeometry args={[0.04, 16, 16]} />
+      <sphereGeometry args={[0.4, 16, 16]} />
       <meshBasicMaterial color="#ff0044" depthTest={false} depthWrite={false} transparent />
     </mesh>
   )
@@ -316,7 +357,8 @@ function Scene({ trajectory, currentFrame, alignment, fitViewRef, focusDotRef }:
   const lumaRef = useRef<LumaSplatsThree>(null)
   const hasTrajectory = trajectory.length > 0
 
-  const matrix = useMemo(() => alignmentMatrix(alignment), [alignment])
+  const scaledAlignment = useMemo(() => alignmentWithPathExtent(alignment), [alignment])
+  const matrix = useMemo(() => alignmentMatrix(scaledAlignment), [scaledAlignment])
 
   useEffect(() => {
     fitViewRef.current = () => {
@@ -373,7 +415,7 @@ function Scene({ trajectory, currentFrame, alignment, fitViewRef, focusDotRef }:
       <group
         position={alignment.position}
         rotation={euler}
-        scale={[alignment.scale, alignment.scale, alignment.scale]}
+        scale={[scaledAlignment.scale, scaledAlignment.scale, scaledAlignment.scale]}
       >
         <TrajectoryTube pathData={trajectory} currentFrame={currentFrame} />
         <CurrentLocationMarker pathData={trajectory} currentFrame={currentFrame} />
@@ -530,8 +572,9 @@ export default function App() {
           {calibrationOpen && (
             <div className="calibration__body">
               <p style={{ fontSize: '0.68rem', color: 'var(--text-muted)', margin: '0 0 0.65rem', lineHeight: 1.45 }}>
-                Nudge path until it sits on the floor. Rotation order XYZ (degrees). Reset only updates sliders here;
-                Save writes to this browser.
+                Nudge path until it sits on the floor. Rotation order XYZ (degrees). Scale stretches the path vs the
+                room (multiplied by {TRAJECTORY_EXTENT_SCALE}× for room fit). Reset only updates sliders here; Save
+                writes to this browser.
               </p>
               <div className="calibration__grid">
                 {(['X', 'Y', 'Z'] as const).map((axis, i) => (
@@ -539,14 +582,31 @@ export default function App() {
                     <span>Pos {axis}</span>
                     <input
                       type="range"
-                      min={-8}
-                      max={8}
-                      step={0.02}
+                      min={ALIGN_POS_MIN}
+                      max={ALIGN_POS_MAX}
+                      step={ALIGN_POS_SLIDER_STEP}
                       value={alignment.position[i]}
                       onChange={(e) => {
                         const v = parseFloat(e.target.value)
                         const next = [...alignment.position] as [number, number, number]
-                        next[i] = v
+                        next[i] = clamp(v, ALIGN_POS_MIN, ALIGN_POS_MAX)
+                        updateAlignment({ position: next })
+                      }}
+                    />
+                    <input
+                      className="calibration__number"
+                      type="number"
+                      min={ALIGN_POS_MIN}
+                      max={ALIGN_POS_MAX}
+                      step={ALIGN_POS_NUMBER_STEP}
+                      value={alignment.position[i]}
+                      onChange={(e) => {
+                        const raw = e.target.value
+                        if (raw === '' || raw === '-') return
+                        const v = parseFloat(raw)
+                        if (!Number.isFinite(v)) return
+                        const next = [...alignment.position] as [number, number, number]
+                        next[i] = clamp(v, ALIGN_POS_MIN, ALIGN_POS_MAX)
                         updateAlignment({ position: next })
                       }}
                     />
@@ -557,14 +617,31 @@ export default function App() {
                     <span>Rot {axis}°</span>
                     <input
                       type="range"
-                      min={-180}
-                      max={180}
-                      step={0.5}
+                      min={ALIGN_ROT_MIN}
+                      max={ALIGN_ROT_MAX}
+                      step={ALIGN_ROT_SLIDER_STEP}
                       value={alignment.rotationDeg[i]}
                       onChange={(e) => {
                         const v = parseFloat(e.target.value)
                         const next = [...alignment.rotationDeg] as [number, number, number]
-                        next[i] = v
+                        next[i] = clamp(v, ALIGN_ROT_MIN, ALIGN_ROT_MAX)
+                        updateAlignment({ rotationDeg: next })
+                      }}
+                    />
+                    <input
+                      className="calibration__number"
+                      type="number"
+                      min={ALIGN_ROT_MIN}
+                      max={ALIGN_ROT_MAX}
+                      step={ALIGN_ROT_NUMBER_STEP}
+                      value={alignment.rotationDeg[i]}
+                      onChange={(e) => {
+                        const raw = e.target.value
+                        if (raw === '' || raw === '-') return
+                        const v = parseFloat(raw)
+                        if (!Number.isFinite(v)) return
+                        const next = [...alignment.rotationDeg] as [number, number, number]
+                        next[i] = clamp(v, ALIGN_ROT_MIN, ALIGN_ROT_MAX)
                         updateAlignment({ rotationDeg: next })
                       }}
                     />
@@ -574,11 +651,28 @@ export default function App() {
                   <span>Scale</span>
                   <input
                     type="range"
-                    min={0.1}
-                    max={4}
-                    step={0.02}
+                    min={ALIGN_SCALE_MIN}
+                    max={ALIGN_SCALE_MAX}
+                    step={ALIGN_SCALE_SLIDER_STEP}
                     value={alignment.scale}
-                    onChange={(e) => updateAlignment({ scale: parseFloat(e.target.value) })}
+                    onChange={(e) =>
+                      updateAlignment({ scale: clamp(parseFloat(e.target.value), ALIGN_SCALE_MIN, ALIGN_SCALE_MAX) })
+                    }
+                  />
+                  <input
+                    className="calibration__number"
+                    type="number"
+                    min={ALIGN_SCALE_MIN}
+                    max={ALIGN_SCALE_MAX}
+                    step={ALIGN_SCALE_NUMBER_STEP}
+                    value={alignment.scale}
+                    onChange={(e) => {
+                      const raw = e.target.value
+                      if (raw === '' || raw === '-') return
+                      const v = parseFloat(raw)
+                      if (!Number.isFinite(v)) return
+                      updateAlignment({ scale: clamp(v, ALIGN_SCALE_MIN, ALIGN_SCALE_MAX) })
+                    }}
                   />
                 </label>
               </div>
