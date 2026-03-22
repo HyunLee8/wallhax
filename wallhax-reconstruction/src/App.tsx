@@ -86,6 +86,33 @@ function fitCameraToLumaDefault(camera: THREE.Camera, controls: OrbitControlsImp
   controls.update()
 }
 
+function fitCameraToCurrentFrame(
+  camera: THREE.Camera,
+  controls: OrbitControlsImpl,
+  trajectory: TrajectoryPoint[],
+  currentFrame: number,
+  matrix: THREE.Matrix4,
+) {
+  if (trajectory.length === 0) return
+  const p = trajectory[currentFrame]
+  if (!p) return
+
+  const dot = transformTrajectoryPoint(p, matrix)
+
+  const bbox = new THREE.Box3()
+  for (const pt of trajectory) {
+    bbox.expandByPoint(transformTrajectoryPoint(pt, matrix))
+  }
+  const size = new THREE.Vector3()
+  bbox.getSize(size)
+  const maxDim = Math.max(size.x, size.y, size.z, 0.01)
+  const dist = Math.max(maxDim * 0.35, 0.35)
+
+  camera.position.set(dot.x + dist * 0.45, dot.y + dist * 0.35, dot.z + dist * 0.45)
+  controls.target.copy(dot)
+  controls.update()
+}
+
 function isTypingInFormControl(): boolean {
   const el = document.activeElement
   if (!el) return false
@@ -129,9 +156,16 @@ function CameraKeyboardPan({ orbitRef }: { orbitRef: React.RefObject<OrbitContro
     const fast = k.has('ShiftLeft') || k.has('ShiftRight')
     const speed = (fast ? 2.5 : 1) * 4 * delta
 
+    const alt = k.has('AltLeft') || k.has('AltRight')
+    const arrowUp = k.has('ArrowUp')
+    const arrowDown = k.has('ArrowDown')
+
     const mx = (k.has('KeyD') || k.has('ArrowRight') ? 1 : 0) - (k.has('KeyA') || k.has('ArrowLeft') ? 1 : 0)
-    const mz = (k.has('KeyW') || k.has('ArrowUp') ? 1 : 0) - (k.has('KeyS') || k.has('ArrowDown') ? 1 : 0)
-    const my = (k.has('KeyE') || k.has('PageUp') ? 1 : 0) - (k.has('KeyQ') || k.has('PageDown') ? 1 : 0)
+    const mz =
+      (k.has('KeyW') || (arrowUp && !alt) ? 1 : 0) - (k.has('KeyS') || (arrowDown && !alt) ? 1 : 0)
+    const my =
+      (k.has('KeyE') || k.has('PageUp') || (alt && arrowUp) ? 1 : 0) -
+      (k.has('KeyQ') || k.has('PageDown') || (alt && arrowDown) ? 1 : 0)
 
     if (mx === 0 && mz === 0 && my === 0) return
 
@@ -273,9 +307,10 @@ type SceneProps = {
   currentFrame: number
   alignment: ArkAlignment
   fitViewRef: React.MutableRefObject<(() => void) | null>
+  focusDotRef: React.MutableRefObject<(() => void) | null>
 }
 
-function Scene({ trajectory, currentFrame, alignment, fitViewRef }: SceneProps) {
+function Scene({ trajectory, currentFrame, alignment, fitViewRef, focusDotRef }: SceneProps) {
   const { camera } = useThree()
   const orbitRef = useRef<OrbitControlsImpl>(null)
   const lumaRef = useRef<LumaSplatsThree>(null)
@@ -297,6 +332,17 @@ function Scene({ trajectory, currentFrame, alignment, fitViewRef }: SceneProps) 
       fitViewRef.current = null
     }
   }, [camera, trajectory, matrix, fitViewRef])
+
+  useEffect(() => {
+    focusDotRef.current = () => {
+      const ctl = orbitRef.current
+      if (!ctl || trajectory.length === 0) return
+      fitCameraToCurrentFrame(camera, ctl, trajectory, currentFrame, matrix)
+    }
+    return () => {
+      focusDotRef.current = null
+    }
+  }, [camera, trajectory, currentFrame, matrix, focusDotRef])
 
   const euler = useMemo(
     () =>
@@ -359,6 +405,7 @@ export default function App() {
   const [playbackFps, setPlaybackFps] = useState(24)
   const [calibrationOpen, setCalibrationOpen] = useState(false)
   const fitViewRef = useRef<(() => void) | null>(null)
+  const focusDotRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     fetch('/transforms.json')
@@ -408,9 +455,7 @@ export default function App() {
   }, [])
 
   const resetAlignment = useCallback(() => {
-    const d = defaultAlignment()
-    setAlignment(d)
-    localStorage.removeItem(ALIGNMENT_STORAGE_KEY)
+    setAlignment(defaultAlignment())
   }, [])
 
   const persistAlignment = useCallback(() => {
@@ -426,6 +471,7 @@ export default function App() {
             currentFrame={currentFrame}
             alignment={alignment}
             fitViewRef={fitViewRef}
+            focusDotRef={focusDotRef}
           />
         </Canvas>
       </div>
@@ -452,11 +498,19 @@ export default function App() {
           </p>
           <p className="hud__hint hud__hint--compact">
             Camera: drag rotate · scroll zoom · right-drag or middle-drag pan · WASD / arrows pan (Shift faster) · Q/E
-            vertical · Fit view recenters on path or default view without data.
+            or Alt+arrows vertical (Option+arrows on Mac) · Fit view / Focus dot — see buttons below.
           </p>
           <div className="hud__actions">
             <button type="button" className="btn btn--primary" onClick={() => fitViewRef.current?.()}>
               Fit view
+            </button>
+            <button
+              type="button"
+              className="btn"
+              disabled={trajectory.length === 0}
+              onClick={() => focusDotRef.current?.()}
+            >
+              Focus dot
             </button>
           </div>
         </div>
@@ -476,7 +530,8 @@ export default function App() {
           {calibrationOpen && (
             <div className="calibration__body">
               <p style={{ fontSize: '0.68rem', color: 'var(--text-muted)', margin: '0 0 0.65rem', lineHeight: 1.45 }}>
-                Nudge path until it sits on the floor. Rotation order XYZ (degrees). Save persists to this browser.
+                Nudge path until it sits on the floor. Rotation order XYZ (degrees). Reset only updates sliders here;
+                Save writes to this browser.
               </p>
               <div className="calibration__grid">
                 {(['X', 'Y', 'Z'] as const).map((axis, i) => (

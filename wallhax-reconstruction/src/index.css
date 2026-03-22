@@ -112,6 +112,10 @@ body {
 
 .hud__actions {
   margin-top: 0.65rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
 }
 
 .timeline {
