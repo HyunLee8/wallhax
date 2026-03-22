@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/">
+  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+    <rdf:Description
+      xmlns:wallhax="http://wallhax.io/ns/1.0/"
+      xmlns:camera="http://wallhax.io/ns/camera/1.0/"
+      xmlns:pose="http://wallhax.io/ns/pose/1.0/"
+      xmlns:tiff="http://ns.adobe.com/tiff/1.0/">
+
+      <!-- Image Info -->
+      <tiff:ImageWidth>1440</tiff:ImageWidth>
+      <tiff:ImageLength>1920</tiff:ImageLength>
+
+      <!-- Camera Intrinsics -->
+      <camera:FocalLengthX>1334.2328</camera:FocalLengthX>
+      <camera:FocalLengthY>1334.2328</camera:FocalLengthY>
+      <camera:PrincipalPointX>967.1746</camera:PrincipalPointX>
+      <camera:PrincipalPointY>716.8352</camera:PrincipalPointY>
+      <camera:Model>OPENCV</camera:Model>
+      <camera:K1>0.0</camera:K1>
+      <camera:K2>0.0</camera:K2>
+      <camera:P1>0.0</camera:P1>
+      <camera:P2>0.0</camera:P2>
+
+      <!-- Camera Pose (camera-to-world) -->
+      <!-- Position (meters) -->
+      <pose:PositionX>-0.6828823</pose:PositionX>
+      <pose:PositionY>0.90867424</pose:PositionY>
+      <pose:PositionZ>-1.1158502</pose:PositionZ>
+
+      <!-- Quaternion (w, x, y, z) -->
+      <pose:QuaternionW>0.6417874</pose:QuaternionW>
+      <pose:QuaternionX>0.08189083</pose:QuaternionX>
+      <pose:QuaternionY>-0.29695863</pose:QuaternionY>
+      <pose:QuaternionZ>-0.70229506</pose:QuaternionZ>
+
+      <!-- Full 4x4 Transform Matrix (row-major) -->
+      <pose:TransformMatrix>-0.16280556 0.85281205 -0.4961916 -0.6828823 -0.9500845 0.00015104329 0.3119921 0.90867424 0.26614562 0.5222181 0.810219 -1.1158502 0.0 0.0 0.0 0.99999994</pose:TransformMatrix>
+
+      <!-- Metadata -->
+      <wallhax:Timestamp>142330.321751416</wallhax:Timestamp>
+      <wallhax:FrameIndex>148</wallhax:FrameIndex>
+      <wallhax:TrackingState>normal</wallhax:TrackingState>
+
+    </rdf:Description>
+  </rdf:RDF>
+</x:xmpmeta>
