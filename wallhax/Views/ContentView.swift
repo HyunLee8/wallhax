@@ -860,15 +860,12 @@ class Coordinator: NSObject, ARSessionDelegate {
                 nameplate.orientation = simd_quatf(angle: billboardYaw - yaw, axis: [0, 1, 0])
             }
 
-            // Check occlusion and swap between solid figure and dashed outline
+            // Solid figure always hidden; dashed outline only when behind a wall
+            peerFigures[peerId]?.isEnabled = false
             let occluded = isPeerOccluded(cameraPos: camPos, peerPos: pos)
             if occluded != (peerOccluded[peerId] ?? false) {
                 peerOccluded[peerId] = occluded
-                peerFigures[peerId]?.isEnabled = !occluded
                 peerOutlines[peerId]?.isEnabled = occluded
-                if let nameplate = peerNameplates[peerId] {
-                    applyMaterials(nameplate, color: .white, occluded: occluded)
-                }
             }
         }
     }
