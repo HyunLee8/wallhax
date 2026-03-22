@@ -11,7 +11,7 @@ class NetworkingManager {
     let clientId = UUID().uuidString
     var callsign: String = ""
 
-    private let staticServerIP: String? = "172.25.172.29"
+    private let staticServerIP: String? = "172.25.146.41"
 
     private var udpSocket: Int32 = -1
     private var serverAddr: sockaddr_in

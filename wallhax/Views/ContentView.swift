@@ -635,6 +635,8 @@ class Coordinator: NSObject, ARSessionDelegate {
     var peerNameplates: [String: Entity] = [:]       // Nameplate text above peer heads
     var peerCallsigns: [String: String] = [:]        // Cached callsign per peer
     var peerOccluded: [String: Bool] = [:]           // Whether peer is behind a wall/floor
+    var peerDistanceLabels: [String: ModelEntity] = [:]  // Distance text below nameplate
+    var peerLastDistanceStr: [String: String] = [:]      // Cached to avoid rebuilding every frame
     var peerTrailAnchors: [String: AnchorEntity] = [:]  // RealityKit trail per peer
     var peerTrailCounts: [String: Int] = [:]             // Track point count to know when to rebuild
     var pinNodes: [UUID: SCNNode] = [:]
@@ -802,7 +804,7 @@ class Coordinator: NSObject, ARSessionDelegate {
             // Shift figure down so head aligns with peer's camera (phone) position
             figure.position.y = -0.80
             anchor.addChild(figure)
-            let outline = PeerModel.makeOutlineEntity(color: UIColor(red: 0.3, green: 0.8, blue: 1.0, alpha: 0.85))
+            let outline = PeerModel.makeOutlineEntity(color: UIColor(red: 1.0, green: 0.2, blue: 0.2, alpha: 0.85))
             outline.position.y = -0.80
             outline.isEnabled = false  // hidden initially
             anchor.addChild(outline)
@@ -821,7 +823,7 @@ class Coordinator: NSObject, ARSessionDelegate {
             let nameplate = PeerModel.makeNameplate(text: callsign)
             nameplateContainer.addChild(nameplate)
             // Position directly above head (head sphere top is at y=0.10 above anchor)
-            nameplateContainer.position = [0, 0.12, 0]
+            nameplateContainer.position = [0, 0.30, 0]
             peerAnchors[peerId]?.addChild(nameplateContainer)
             peerNameplates[peerId] = nameplateContainer
             peerCallsigns[peerId] = callsign
@@ -854,10 +856,28 @@ class Coordinator: NSObject, ARSessionDelegate {
             let camPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
 
             if let nameplate = peerNameplates[peerId] {
-                let nameplateWorldPos = pos + SIMD3<Float>(0, 0.12, 0)
+                let nameplateWorldPos = pos + SIMD3<Float>(0, 0.30, 0)
                 let direction = camPos - nameplateWorldPos
                 let billboardYaw = atan2(direction.x, direction.z)
                 nameplate.orientation = simd_quatf(angle: billboardYaw - yaw, axis: [0, 1, 0])
+
+                // Update distance label
+                let dist = simd_distance(camPos, pos)
+                let distStr: String
+                if dist < 1.0 {
+                    distStr = String(format: "%.1fm", dist)
+                } else {
+                    distStr = String(format: "%.0fm", dist)
+                }
+                if distStr != peerLastDistanceStr[peerId] {
+                    peerDistanceLabels[peerId]?.removeFromParent()
+                    let label = PeerModel.makeNameplate(text: distStr)
+                    label.scale = SIMD3<Float>(repeating: 0.7)
+                    label.position.y = -0.10
+                    nameplate.addChild(label)
+                    peerDistanceLabels[peerId] = label
+                    peerLastDistanceStr[peerId] = distStr
+                }
             }
 
             // Solid figure always hidden; dashed outline only when behind a wall
@@ -939,6 +959,8 @@ class Coordinator: NSObject, ARSessionDelegate {
             peerNameplates.removeValue(forKey: id)
             peerCallsigns.removeValue(forKey: id)
             peerOccluded.removeValue(forKey: id)
+            peerDistanceLabels.removeValue(forKey: id)
+            peerLastDistanceStr.removeValue(forKey: id)
             peerTrailAnchors[id]?.removeFromParent()
             peerTrailAnchors.removeValue(forKey: id)
             peerTrailCounts.removeValue(forKey: id)
