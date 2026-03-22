@@ -12,8 +12,12 @@ extend({ LumaSplats: LumaSplatsThree })
 
 const ALIGNMENT_STORAGE_KEY = 'wallhax.arkitAlignment'
 
-/** Uniform scale for ARKit path vs fixed Luma splat (multiplied with Alignment → Scale). */
-const TRAJECTORY_EXTENT_SCALE = 1.75
+/**
+ * Multiplies raw ARKit trajectory x/y/z so the path spans longer in space.
+ * Applied to positions only — tube radius and dot size stay fixed in path space, so girth does not grow with stretch.
+ * Alignment → Scale still uniformly scales the whole path group (room fit).
+ */
+const PATH_POSITION_SCALE = 1.75
 
 const ALIGN_POS_MIN = -40
 const ALIGN_POS_MAX = 40
@@ -86,14 +90,49 @@ function alignmentMatrix(alignment: ArkAlignment): THREE.Matrix4 {
   return m
 }
 
-/** Applies TRAJECTORY_EXTENT_SCALE so path, dot, and camera fit use the same scale as the group. */
-function alignmentWithPathExtent(alignment: ArkAlignment): ArkAlignment {
-  const s = alignment.scale * TRAJECTORY_EXTENT_SCALE
-  return { ...alignment, scale: s }
+/** Local-space point to hold fixed in world space when alignment scale changes (path space, before group scale). */
+function scalePivotLocal(trajectory: TrajectoryPoint[], currentFrame: number, out: THREE.Vector3): THREE.Vector3 {
+  if (trajectory.length === 0) {
+    return out.set(0, 0, 0)
+  }
+  const atFrame = trajectory[currentFrame]
+  if (atFrame) {
+    return out.copy(scalePathPosition(atFrame))
+  }
+  const bbox = new THREE.Box3()
+  for (const p of trajectory) {
+    bbox.expandByPoint(scalePathPosition(p))
+  }
+  return bbox.getCenter(out)
+}
+
+/** Keeps the pivot fixed in world space when uniform scale changes (same as scaling about that point in the group's local frame). */
+function positionAfterScaleChange(
+  prev: ArkAlignment,
+  nextScale: number,
+  pivotLocal: THREE.Vector3,
+): [number, number, number] {
+  const euler = new THREE.Euler(
+    THREE.MathUtils.degToRad(prev.rotationDeg[0]),
+    THREE.MathUtils.degToRad(prev.rotationDeg[1]),
+    THREE.MathUtils.degToRad(prev.rotationDeg[2]),
+    'XYZ',
+  )
+  const q = new THREE.Quaternion().setFromEuler(euler)
+  const delta = new THREE.Vector3().copy(pivotLocal).multiplyScalar(prev.scale - nextScale).applyQuaternion(q)
+  return [prev.position[0] + delta.x, prev.position[1] + delta.y, prev.position[2] + delta.z]
+}
+
+function scalePathPosition(p: TrajectoryPoint): THREE.Vector3 {
+  return new THREE.Vector3(
+    p.x * PATH_POSITION_SCALE,
+    p.y * PATH_POSITION_SCALE,
+    p.z * PATH_POSITION_SCALE,
+  )
 }
 
 function transformTrajectoryPoint(p: TrajectoryPoint, matrix: THREE.Matrix4): THREE.Vector3 {
-  return new THREE.Vector3(p.x, p.y, p.z).applyMatrix4(matrix)
+  return scalePathPosition(p).applyMatrix4(matrix)
 }
 
 function fitCameraToTrajectory(
@@ -241,7 +280,7 @@ const TrajectoryTube = ({ pathData, currentFrame }: TrajectoryProps) => {
   const points = useMemo(() => {
     const visiblePath = pathData.slice(0, currentFrame + 1)
     if (!visiblePath || visiblePath.length < 2) return []
-    return visiblePath.map((p) => new THREE.Vector3(p.x, p.y, p.z))
+    return visiblePath.map((p) => scalePathPosition(p))
   }, [pathData, currentFrame])
 
   const curve = useMemo(() => {
@@ -271,9 +310,10 @@ const CurrentLocationMarker = ({ pathData, currentFrame }: TrajectoryProps) => {
   const currentPos = pathData[currentFrame]
   if (!currentPos) return null
 
+  const pos = scalePathPosition(currentPos)
   return (
-    <mesh position={[currentPos.x, currentPos.y, currentPos.z]} renderOrder={1001}>
-      <sphereGeometry args={[0.4, 16, 16]} />
+    <mesh position={[pos.x, pos.y, pos.z]} renderOrder={1001}>
+      <sphereGeometry args={[0.2, 16, 16]} />
       <meshBasicMaterial color="#ff0044" depthTest={false} depthWrite={false} transparent />
     </mesh>
   )
@@ -357,8 +397,7 @@ function Scene({ trajectory, currentFrame, alignment, fitViewRef, focusDotRef }:
   const lumaRef = useRef<LumaSplatsThree>(null)
   const hasTrajectory = trajectory.length > 0
 
-  const scaledAlignment = useMemo(() => alignmentWithPathExtent(alignment), [alignment])
-  const matrix = useMemo(() => alignmentMatrix(scaledAlignment), [scaledAlignment])
+  const matrix = useMemo(() => alignmentMatrix(alignment), [alignment])
 
   useEffect(() => {
     fitViewRef.current = () => {
@@ -415,7 +454,7 @@ function Scene({ trajectory, currentFrame, alignment, fitViewRef, focusDotRef }:
       <group
         position={alignment.position}
         rotation={euler}
-        scale={[scaledAlignment.scale, scaledAlignment.scale, scaledAlignment.scale]}
+        scale={[alignment.scale, alignment.scale, alignment.scale]}
       >
         <TrajectoryTube pathData={trajectory} currentFrame={currentFrame} />
         <CurrentLocationMarker pathData={trajectory} currentFrame={currentFrame} />
@@ -448,6 +487,7 @@ export default function App() {
   const [calibrationOpen, setCalibrationOpen] = useState(false)
   const fitViewRef = useRef<(() => void) | null>(null)
   const focusDotRef = useRef<(() => void) | null>(null)
+  const scalePivotScratch = useRef(new THREE.Vector3())
 
   useEffect(() => {
     fetch('/transforms.json')
@@ -572,8 +612,9 @@ export default function App() {
           {calibrationOpen && (
             <div className="calibration__body">
               <p style={{ fontSize: '0.68rem', color: 'var(--text-muted)', margin: '0 0 0.65rem', lineHeight: 1.45 }}>
-                Nudge path until it sits on the floor. Rotation order XYZ (degrees). Scale stretches the path vs the
-                room (multiplied by {TRAJECTORY_EXTENT_SCALE}× for room fit). Reset only updates sliders here; Save
+                Nudge path until it sits on the floor. Rotation order XYZ (degrees). Scale uniformly fits the path to
+                the room; path vertex spacing is stretched by {PATH_POSITION_SCALE}× for length (tube thickness stays
+                the same in path units). Reset only updates sliders here; Save
                 writes to this browser.
               </p>
               <div className="calibration__grid">
@@ -655,9 +696,18 @@ export default function App() {
                     max={ALIGN_SCALE_MAX}
                     step={ALIGN_SCALE_SLIDER_STEP}
                     value={alignment.scale}
-                    onChange={(e) =>
-                      updateAlignment({ scale: clamp(parseFloat(e.target.value), ALIGN_SCALE_MIN, ALIGN_SCALE_MAX) })
-                    }
+                    onChange={(e) => {
+                      const nextScale = clamp(parseFloat(e.target.value), ALIGN_SCALE_MIN, ALIGN_SCALE_MAX)
+                      setAlignment((prev) => {
+                        if (prev.scale === nextScale) return prev
+                        const pivot = scalePivotLocal(trajectory, currentFrame, scalePivotScratch.current)
+                        return {
+                          ...prev,
+                          scale: nextScale,
+                          position: positionAfterScaleChange(prev, nextScale, pivot),
+                        }
+                      })
+                    }}
                   />
                   <input
                     className="calibration__number"
@@ -671,7 +721,16 @@ export default function App() {
                       if (raw === '' || raw === '-') return
                       const v = parseFloat(raw)
                       if (!Number.isFinite(v)) return
-                      updateAlignment({ scale: clamp(v, ALIGN_SCALE_MIN, ALIGN_SCALE_MAX) })
+                      const nextScale = clamp(v, ALIGN_SCALE_MIN, ALIGN_SCALE_MAX)
+                      setAlignment((prev) => {
+                        if (prev.scale === nextScale) return prev
+                        const pivot = scalePivotLocal(trajectory, currentFrame, scalePivotScratch.current)
+                        return {
+                          ...prev,
+                          scale: nextScale,
+                          position: positionAfterScaleChange(prev, nextScale, pivot),
+                        }
+                      })
                     }}
                   />
                 </label>
