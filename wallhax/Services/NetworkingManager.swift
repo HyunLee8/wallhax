@@ -10,12 +10,7 @@ class NetworkingManager {
 
     let clientId = UUID().uuidString
 
-    // Set to override broadcast discovery with a fixed server IP
-    #if DEBUG
-    private let staticServerIP: String? = "172.25.146.41"  // local dev Mac
-    #else
-    private let staticServerIP: String? = "172.25.138.15"  // ops Mac
-    #endif
+    private let staticServerIP: String? = "172.25.146.41"
 
     private var udpSocket: Int32 = -1
     private var serverAddr: sockaddr_in
