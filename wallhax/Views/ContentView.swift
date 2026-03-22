@@ -577,14 +577,18 @@ class Coordinator: NSObject, ARSessionDelegate {
     var scnView: SCNView?
     var scnCameraNode = SCNNode()
     var peerNodes: [String: SCNNode] = [:]
-    var pinAnchors: [UUID: AnchorEntity] = [:]
-    var pinBobEntities: [UUID: (entity: Entity, phase: Float)] = [:]
+    var pinNodes: [UUID: SCNNode] = [:]
     var pinDistanceNodes: [UUID: SCNNode] = [:]
     var distanceFrameCounter: Int = 0
     var subscriptions: [Any] = []
     private var planeAnchors: [UUID: ARPlaneAnchor] = [:]
     private var planeFrameCounter = 0
     private let planeSendEveryN = 60
+
+    // Auto-pin tracking for detected objects
+    private var detectionTracker: [String: (center: CGPoint, firstSeen: TimeInterval)] = [:]
+    private var autoPinnedRegions: [CGPoint] = []
+    private let autoPinDelay: TimeInterval = 1.5
 
     init(isRecording: Binding<Bool>) {
         _isRecording = isRecording
@@ -651,6 +655,8 @@ class Coordinator: NSObject, ARSessionDelegate {
         }
         NetworkingManager.shared.processFrame(frame)
         ARState.shared.update(frame: frame)
+        ObjectDetector.shared.processFrame(frame)
+        processAutoPin(frame: frame)
         if isRecording {
             SnapshotManager.shared.processFrame(frame)
         }
@@ -711,6 +717,72 @@ class Coordinator: NSObject, ARSessionDelegate {
         }
     }
 
+    // MARK: - Auto-Pin from Object Detection
+
+    func processAutoPin(frame: ARFrame) {
+        let objects = ARState.shared.detectedObjects
+        let now = frame.timestamp
+        var newTracker: [String: (center: CGPoint, firstSeen: TimeInterval)] = [:]
+
+        for obj in objects {
+            let center = CGPoint(x: obj.normalizedBounds.midX, y: obj.normalizedBounds.midY)
+
+            var matched = false
+            for (key, tracked) in detectionTracker where key.hasPrefix(obj.type) {
+                let dist = hypot(center.x - tracked.center.x, center.y - tracked.center.y)
+                if dist < 0.1 {
+                    newTracker[key] = (center: center, firstSeen: tracked.firstSeen)
+                    let elapsed = now - tracked.firstSeen
+
+                    if elapsed >= autoPinDelay && !isRegionPinned(center) {
+                        autoPinAt(center: center, label: obj.type)
+                        autoPinnedRegions.append(center)
+                    }
+                    matched = true
+                    break
+                }
+            }
+
+            if !matched {
+                let key = "\(obj.type)_\(Int.random(in: 0...9999))"
+                newTracker[key] = (center: center, firstSeen: now)
+            }
+        }
+        detectionTracker = newTracker
+    }
+
+    private func isRegionPinned(_ center: CGPoint) -> Bool {
+        autoPinnedRegions.contains { p in hypot(center.x - p.x, center.y - p.y) < 0.15 }
+    }
+
+    private func autoPinAt(center: CGPoint, label: String) {
+        guard let arView = arView else { return }
+        let screenSize = arView.bounds.size
+        let screenPoint = CGPoint(
+            x: center.x * screenSize.width,
+            y: (1 - center.y) * screenSize.height
+        )
+
+        let results = arView.raycast(from: screenPoint, allowing: .estimatedPlane, alignment: .any)
+        let position: SIMD3<Float>
+        if let hit = results.first {
+            let c = hit.worldTransform.columns.3
+            position = SIMD3<Float>(c.x, c.y, c.z)
+        } else if let frame = arView.session.currentFrame {
+            let cam = frame.camera.transform
+            let fwd = SIMD3<Float>(-cam.columns.2.x, -cam.columns.2.y, -cam.columns.2.z)
+            let org = SIMD3<Float>(cam.columns.3.x, cam.columns.3.y, cam.columns.3.z)
+            position = org + simd_normalize(fwd) * 3.0
+        } else { return }
+
+        // Don't pin too close to existing pins
+        let tooClose = ARState.shared.pins.contains { simd_distance($0.position, position) < 1.5 }
+        guard !tooClose else { return }
+
+        ARState.shared.addPin(position: position, label: label, color: .white)
+        NetworkingManager.shared.sendPin(position: position, label: label)
+    }
+
     // MARK: - Pin Placement via Raycast
 
     func dropPin(label: String, color: UIColor) {
@@ -740,68 +812,185 @@ class Coordinator: NSObject, ARSessionDelegate {
     // MARK: - Pin Entity Creation
 
     func addPinToScene(_ pin: MapPin, color: UIColor) {
-        guard let arView = arView else { return }
+        guard let scene = scnView?.scene else { return }
 
-        let pillarH: Float = 3.0
-        let white = UIColor.white
-        let anchor = AnchorEntity(world: pin.position)
+        let pillarH: CGFloat = 0.8
+        let warmWhite = UIColor(red: 1.0, green: 0.97, blue: 0.92, alpha: 1.0)
 
-        // Light pillar — layered concentric cylinders, bright core fading outward
-        let layers: [(radius: Float, alpha: Float)] = [
-            (0.008, 1.00),   // bright core
-            (0.022, 0.55),
-            (0.055, 0.22),
-            (0.110, 0.09),
-            (0.200, 0.03),
+        let root = SCNNode()
+        root.position = SCNVector3(pin.position.x, pin.position.y, pin.position.z)
+
+        // ── Additive-blend helper ───────────────────────────────
+        // blendMode = .add makes each layer ADD brightness to the
+        // scene rather than painting over it. This is how real
+        // light works — overlapping glow builds up intensity, and
+        // you see right through the outer halo. Combined with
+        // emission (self-lit, ignores scene lighting) this creates
+        // genuine volumetric-looking light.
+
+        func glowMaterial(color: UIColor, alpha: CGFloat) -> SCNMaterial {
+            let mat = SCNMaterial()
+            let c = color.withAlphaComponent(alpha)
+            mat.diffuse.contents = UIColor.clear
+            mat.emission.contents = c
+            mat.blendMode = .add
+            mat.writesToDepthBuffer = false
+            mat.readsFromDepthBuffer = false
+            mat.isDoubleSided = true
+            mat.transparent.contents = c
+            return mat
+        }
+
+        // ── Core Pillar ─────────────────────────────────────────
+        // Tight, bright center — looks like a solid rod of light.
+        // Each layer slightly shorter than the last for taper.
+        let coreLayers: [(r: CGFloat, a: CGFloat, hs: CGFloat)] = [
+            (0.004, 1.00, 1.00),   // needle-bright center
+            (0.009, 0.85, 1.00),
+            (0.016, 0.60, 0.98),
+            (0.026, 0.40, 0.96),
         ]
-        for layer in layers {
-            let e = ModelEntity(
-                mesh: .generateCylinder(height: pillarH, radius: layer.radius),
-                materials: [UnlitMaterial(color: white.withAlphaComponent(CGFloat(layer.alpha)))]
-            )
-            e.position = [0, pillarH / 2, 0]
-            anchor.addChild(e)
+        for layer in coreLayers {
+            let h = pillarH * layer.hs
+            let cyl = SCNCylinder(radius: layer.r, height: h)
+            cyl.radialSegmentCount = 16
+            cyl.materials = [glowMaterial(color: warmWhite, alpha: layer.a)]
+            let n = SCNNode(geometry: cyl)
+            n.position = SCNVector3(0, Float(h / 2), 0)
+            root.addChildNode(n)
         }
 
-        // Ground bloom — soft bright disc at base
-        let groundLayers: [(radius: Float, alpha: Float)] = [
-            (0.06,  0.90),
-            (0.14,  0.40),
-            (0.28,  0.15),
-            (0.50,  0.05),
+        // ── Outer Glow ──────────────────────────────────────────
+        // Wider, softer halos that get shorter toward the outside.
+        // With additive blending these are genuinely translucent —
+        // the AR camera feed shows right through them, tinted with
+        // warm light. This is the "defined edges but not solid" look.
+        let glowLayers: [(r: CGFloat, a: CGFloat, hs: CGFloat)] = [
+            (0.040, 0.28, 0.93),
+            (0.065, 0.16, 0.86),
+            (0.100, 0.09, 0.78),
+            (0.160, 0.045, 0.66),
+            (0.250, 0.018, 0.52),
+            (0.380, 0.006, 0.38),
         ]
-        for g in groundLayers {
-            let e = ModelEntity(
-                mesh: .generateCylinder(height: 0.003, radius: g.radius),
-                materials: [UnlitMaterial(color: white.withAlphaComponent(CGFloat(g.alpha)))]
-            )
-            e.position = [0, 0.0015, 0]
-            anchor.addChild(e)
+        for layer in glowLayers {
+            let h = pillarH * layer.hs
+            let cyl = SCNCylinder(radius: layer.r, height: h)
+            cyl.radialSegmentCount = 24
+            cyl.materials = [glowMaterial(color: warmWhite, alpha: layer.a)]
+            let n = SCNNode(geometry: cyl)
+            n.position = SCNVector3(0, Float(h / 2), 0)
+            root.addChildNode(n)
         }
 
-        arView.scene.addAnchor(anchor)
-        pinAnchors[pin.id] = anchor
-
-        // Grow from ground
-        anchor.scale = [1, 0.001, 1]
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            anchor.move(to: Transform(scale: .one), relativeTo: nil,
-                        duration: 0.6, timingFunction: .easeOut)
+        // ── Ground Bloom ────────────────────────────────────────
+        // Pool of light on the ground — additive so it brightens
+        // the floor beneath rather than painting a white disc.
+        let bloomLayers: [(r: CGFloat, a: CGFloat)] = [
+            (0.05,  0.80),
+            (0.10,  0.45),
+            (0.18,  0.22),
+            (0.30,  0.10),
+            (0.50,  0.035),
+            (0.75,  0.010),
+        ]
+        for g in bloomLayers {
+            let disc = SCNCylinder(radius: g.r, height: 0.003)
+            disc.materials = [glowMaterial(color: warmWhite, alpha: g.a)]
+            let n = SCNNode(geometry: disc)
+            n.position = SCNVector3(0, 0.0015, 0)
+            root.addChildNode(n)
         }
 
-        addPinDistanceLabel(pin: pin, color: white)
+        // ── Top Dissipation ─────────────────────────────────────
+        // The pillar doesn't just cut off — it feathers into
+        // nothing, like light scattering at the top of the crystal
+        // column.
+        let capLayers: [(r: CGFloat, a: CGFloat)] = [
+            (0.03, 0.25),
+            (0.08, 0.10),
+            (0.15, 0.03),
+        ]
+        for c in capLayers {
+            let disc = SCNCylinder(radius: c.r, height: 0.004)
+            disc.materials = [glowMaterial(color: warmWhite, alpha: c.a)]
+            let n = SCNNode(geometry: disc)
+            n.position = SCNVector3(0, Float(pillarH), 0)
+            root.addChildNode(n)
+        }
+
+        // ── Particle System — Ice Crystal Shimmer ───────────────
+        // Tiny bright particles drifting slowly upward inside the
+        // pillar, simulating the suspended ice crystals that cause
+        // real light pillars. Additive blend so they look like
+        // tiny points of reflected light, not solid dots.
+        let particles = SCNParticleSystem()
+        particles.particleLifeSpan = 3.0
+        particles.particleLifeSpanVariation = 1.5
+        particles.birthRate = 20
+        particles.warmupDuration = 2.0
+        particles.emissionDuration = .greatestFiniteMagnitude
+
+        particles.particleSize = 0.005
+        particles.particleSizeVariation = 0.003
+        particles.particleColor = warmWhite
+        particles.particleColorVariation = SCNVector4(0, 0, 0.05, 0)
+        particles.blendMode = .additive
+
+        let emitterShape = SCNCylinder(radius: 0.025, height: pillarH * 0.9)
+        particles.emitterShape = emitterShape
+        particles.birthLocation = .volume
+
+        particles.particleVelocity = 0.04
+        particles.particleVelocityVariation = 0.025
+        particles.emittingDirection = SCNVector3(0, 1, 0)
+        particles.spreadingAngle = 8
+
+        // Fade in and out so particles appear/disappear smoothly
+        let fadeIn = SCNParticlePropertyController(
+            animation: {
+                let anim = CAKeyframeAnimation()
+                anim.values = [0.0, 1.0, 1.0, 0.0]
+                anim.keyTimes = [0, 0.15, 0.8, 1.0]
+                anim.duration = 1.0
+                return anim
+            }()
+        )
+        particles.propertyControllers = [.opacity: fadeIn]
+
+        let particleNode = SCNNode()
+        particleNode.position = SCNVector3(0, Float(pillarH * 0.45), 0)
+        particleNode.addParticleSystem(particles)
+        root.addChildNode(particleNode)
+
+        // ── Grow Animation ──────────────────────────────────────
+        root.scale = SCNVector3(1, 0.001, 1)
+        scene.rootNode.addChildNode(root)
+        pinNodes[pin.id] = root
+
+        SCNTransaction.begin()
+        SCNTransaction.animationDuration = 0.9
+        SCNTransaction.animationTimingFunction =
+            CAMediaTimingFunction(name: .easeOut)
+        root.scale = SCNVector3(1, 1, 1)
+        SCNTransaction.commit()
+
+        addPinDistanceLabel(pin: pin)
     }
 
-    private func addPinDistanceLabel(pin: MapPin, color: UIColor) {
+    private func addPinDistanceLabel(pin: MapPin) {
         guard let scene = scnView?.scene else { return }
 
         let textGeom = SCNText(string: pin.label + "\n– m", extrusionDepth: 0)
-        textGeom.font = UIFont.systemFont(ofSize: 0.22, weight: .bold)
+        textGeom.font = UIFont.systemFont(ofSize: 0.14, weight: .bold)
         textGeom.flatness = 0.005
         textGeom.alignmentMode = CATextLayerAlignmentMode.center.rawValue
+
         let mat = SCNMaterial()
-        mat.diffuse.contents = UIColor.white
-        mat.emission.contents = color
+        mat.diffuse.contents = UIColor.clear
+        mat.emission.contents = UIColor(red: 1.0, green: 0.97, blue: 0.92, alpha: 1.0)
+        mat.blendMode = .add
+        mat.writesToDepthBuffer = false
         mat.isDoubleSided = true
         textGeom.materials = [mat]
 
@@ -812,7 +1001,7 @@ class Coordinator: NSObject, ARSessionDelegate {
         let billboard = SCNBillboardConstraint()
         billboard.freeAxes = .all
         node.constraints = [billboard]
-        node.position = SCNVector3(pin.position.x, pin.position.y + 3.3, pin.position.z)
+        node.position = SCNVector3(pin.position.x, pin.position.y + 0.9, pin.position.z)
 
         scene.rootNode.addChildNode(node)
         pinDistanceNodes[pin.id] = node
