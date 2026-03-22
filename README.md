@@ -58,7 +58,7 @@ After you have imagery and matching `.xmp` sidecars under `mapping/data/<mission
 cd mapping && python3 build_mission_dataset.py --mission <mission_id>
 ```
 
-Output goes to `mapping/processed/<mission>/` (`transforms.json`, `images/`, optional `points.json`). The script applies an ARKit → OpenCV-style axis conversion for NeRF tooling. Example train command (from the script’s success message):
+Output goes to `mapping/processed/<mission>/` (`transforms.json`, `images/`). The script applies an ARKit → OpenCV-style axis conversion for NeRF tooling. Example train command (from the script’s success message):
 
 ```bash
 ns-train splatfacto --data mapping/processed/<mission_id>
