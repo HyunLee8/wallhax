@@ -35,6 +35,7 @@ struct ContentView: View {
                 .edgesIgnoringSafeArea(.all)
                 .allowsHitTesting(false)
 
+            if arState.originLocked {
             // ── Crosshair ────────────────────────────────────────
             ZStack {
                 Rectangle()
@@ -284,6 +285,8 @@ struct ContentView: View {
             .ignoresSafeArea()
             .opacity(showPinWheel ? 1 : 0)
             .zIndex(15)
+
+            } // end if originLocked
 
             // ── Full map overlay ─────────────────────────────────
             if showFullMap {
@@ -718,12 +721,13 @@ class Coordinator: NSObject, ARSessionDelegate {
     }
 
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
+        ARState.shared.update(frame: frame)
+        guard ARState.shared.originLocked else { return }
         planeFrameCounter += 1
         if planeFrameCounter % planeSendEveryN == 0 {
             sendCurrentPlanes()
         }
         NetworkingManager.shared.processFrame(frame)
-        ARState.shared.update(frame: frame)
         ObjectDetector.shared.processFrame(frame)
         processAutoPin(frame: frame)
         if isRecording {

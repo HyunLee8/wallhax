@@ -41,6 +41,7 @@ struct MilitaryOperationsView: View {
                 .edgesIgnoringSafeArea(.all)
                 .allowsHitTesting(false)
 
+            if arState.originLocked {
             // Recording edge glow
             if isRecording {
                 RecordingVignette(red: red, blinkOn: blinkOn)
@@ -110,6 +111,7 @@ struct MilitaryOperationsView: View {
                 .ignoresSafeArea()
                 .zIndex(15)
             }
+            } // end if originLocked
 
             // Full map
             if showFullMap {
