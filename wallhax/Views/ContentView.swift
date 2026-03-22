@@ -31,11 +31,12 @@ struct ContentView: View {
 
     var body: some View {
         ZStack {
-            ARViewContainer(isRecording: $isRecording, lidarEnabled: $lidarEnabled)
+            ARViewContainer(isRecording: $isRecording, lidarEnabled: $lidarEnabled, callsign: callsign)
                 .edgesIgnoringSafeArea(.all)
                 .allowsHitTesting(false)
 
             if arState.originLocked {
+            Group {
             // ── Crosshair ────────────────────────────────────────
             ZStack {
                 Rectangle()
@@ -274,6 +275,8 @@ struct ContentView: View {
                 .padding(.bottom, 80)
             }
 
+            }
+            .transition(.opacity.combined(with: .scale(0.98)))
             // ── Pin wheel overlay ────────────────────────────────
             } // end if originLocked
             PinWheelOverlay(
@@ -348,7 +351,7 @@ struct ContentView: View {
                     .padding(.horizontal, 32)
                     .padding(.bottom, 80)
                 }
-                .transition(.opacity)
+                .transition(.opacity.combined(with: .scale(1.04)).combined(with: .blurReplace))
                 .zIndex(20)
                 .allowsHitTesting(false)
             }
@@ -529,6 +532,7 @@ struct ContentView: View {
 struct ARViewContainer: UIViewRepresentable {
     @Binding var isRecording: Bool
     @Binding var lidarEnabled: Bool
+    let callsign: String
 
     func makeCoordinator() -> Coordinator {
         Coordinator(isRecording: $isRecording)
@@ -562,9 +566,10 @@ struct ARViewContainer: UIViewRepresentable {
 
         let coordinator = context.coordinator
 
-        NetworkingManager.shared.onPeerTransformReceived = { [weak coordinator] peerId, transform in
-            coordinator?.updatePeer(peerId, transform: transform)
-            ARState.shared.updatePeer(peerId, transform: transform)
+        NetworkingManager.shared.callsign = callsign
+        NetworkingManager.shared.onPeerTransformReceived = { [weak coordinator] peerId, transform, peerCallsign in
+            coordinator?.updatePeer(peerId, transform: transform, callsign: peerCallsign)
+            ARState.shared.updatePeer(peerId, transform: transform, callsign: peerCallsign)
         }
 
         NetworkingManager.shared.onPinReceived = { position, label in
@@ -625,6 +630,12 @@ class Coordinator: NSObject, ARSessionDelegate {
     var scnCameraNode = SCNNode()
     var peerNodes: [String: SCNNode] = [:]       // legacy, kept for compatibility
     var peerAnchors: [String: AnchorEntity] = [:]  // RealityKit peer figures
+    var peerFigures: [String: Entity] = [:]          // The stick figure entity per peer
+    var peerNameplates: [String: Entity] = [:]       // Nameplate text above peer heads
+    var peerCallsigns: [String: String] = [:]        // Cached callsign per peer
+    var peerOccluded: [String: Bool] = [:]           // Whether peer is behind a wall/floor
+    var peerTrailAnchors: [String: AnchorEntity] = [:]  // RealityKit trail per peer
+    var peerTrailCounts: [String: Int] = [:]             // Track point count to know when to rebuild
     var pinNodes: [UUID: SCNNode] = [:]
     var pinDistanceNodes: [UUID: SCNNode] = [:]
     var distanceFrameCounter: Int = 0
@@ -634,11 +645,7 @@ class Coordinator: NSObject, ARSessionDelegate {
     private let planeSendEveryN = 60
 
     private var originSet = false
-
-    // Auto-pin tracking for detected objects
-    private var detectionTracker: [String: (center: CGPoint, firstSeen: TimeInterval)] = [:]
-    private var autoPinnedRegions: [CGPoint] = []
-    private let autoPinDelay: TimeInterval = 1.5
+    private var estimatedFloorY: Float?
 
     init(isRecording: Binding<Bool>) {
         _isRecording = isRecording
@@ -693,7 +700,9 @@ class Coordinator: NSObject, ARSessionDelegate {
             session.setWorldOrigin(relativeTransform: gravityAlignedMatrix)
 
             DispatchQueue.main.async {
-                ARState.shared.originLocked = true
+                withAnimation(.easeOut(duration: 0.5)) {
+                    ARState.shared.originLocked = true
+                }
             }
         }
     }
@@ -718,8 +727,6 @@ class Coordinator: NSObject, ARSessionDelegate {
             sendCurrentPlanes()
         }
         NetworkingManager.shared.processFrame(frame)
-        ObjectDetector.shared.processFrame(frame)
-        processAutoPin(frame: frame)
         if isRecording {
             SnapshotManager.shared.processFrame(frame)
         }
@@ -729,7 +736,33 @@ class Coordinator: NSObject, ARSessionDelegate {
             let fy = frame.camera.intrinsics.columns.1.y
             scnCameraNode.camera?.fieldOfView = CGFloat(2 * atan(Float(res.height) / (2 * fy)) * 180 / .pi)
         }
+        updateFloorEstimate()
         pruneStalePeers()
+        updatePeerTrails()
+    }
+
+    private func updateFloorEstimate() {
+        var lowestY: Float? = nil
+        for anchor in planeAnchors.values {
+            guard anchor.alignment == .horizontal else { continue }
+            let y = anchor.transform.columns.3.y + anchor.center.y
+            if lowestY == nil || y < lowestY! {
+                lowestY = y
+            }
+        }
+        if let y = lowestY {
+            let isFirst = estimatedFloorY == nil
+            // Smooth it to avoid jitter
+            if let current = estimatedFloorY {
+                estimatedFloorY = current * 0.9 + y * 0.1
+            } else {
+                estimatedFloorY = y
+            }
+            // Force trail rebuild when floor is first detected
+            if isFirst {
+                peerTrailCounts.removeAll()
+            }
+        }
     }
 
     // MARK: - Plane Streaming
@@ -759,7 +792,7 @@ class Coordinator: NSObject, ARSessionDelegate {
 
     // MARK: - Peer Avatars (RealityKit — rendered directly in ARView)
 
-    func updatePeer(_ peerId: String, transform: simd_float4x4) {
+    func updatePeer(_ peerId: String, transform: simd_float4x4, callsign: String = "") {
         guard let arView = arView else { return }
 
         if peerAnchors[peerId] == nil {
@@ -770,6 +803,21 @@ class Coordinator: NSObject, ARSessionDelegate {
             anchor.addChild(figure)
             arView.scene.addAnchor(anchor)
             peerAnchors[peerId] = anchor
+            peerFigures[peerId] = figure
+        }
+
+        // Add or update nameplate
+        if !callsign.isEmpty && callsign != peerCallsigns[peerId] {
+            // Remove old nameplate
+            peerNameplates[peerId]?.removeFromParent()
+            let nameplateContainer = Entity()
+            let nameplate = PeerModel.makeNameplate(text: callsign)
+            nameplateContainer.addChild(nameplate)
+            // Position directly above head (head sphere top is at y=0.10 above anchor)
+            nameplateContainer.position = [0, 0.12, 0]
+            peerAnchors[peerId]?.addChild(nameplateContainer)
+            peerNameplates[peerId] = nameplateContainer
+            peerCallsigns[peerId] = callsign
         }
 
         let anchor = peerAnchors[peerId]!
@@ -778,6 +826,94 @@ class Coordinator: NSObject, ARSessionDelegate {
 
         anchor.position = pos
         anchor.orientation = simd_quatf(angle: yaw, axis: [0, 1, 0])
+
+        // Billboard the nameplate toward the camera
+        if let cameraTransform = arView.session.currentFrame?.camera.transform {
+            let camPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
+
+            if let nameplate = peerNameplates[peerId] {
+                let nameplateWorldPos = pos + SIMD3<Float>(0, 0.12, 0)
+                let direction = camPos - nameplateWorldPos
+                let billboardYaw = atan2(direction.x, direction.z)
+                nameplate.orientation = simd_quatf(angle: billboardYaw - yaw, axis: [0, 1, 0])
+            }
+
+            // Check occlusion and swap materials
+            let occluded = isPeerOccluded(cameraPos: camPos, peerPos: pos)
+            if occluded != (peerOccluded[peerId] ?? false) {
+                peerOccluded[peerId] = occluded
+                if let figure = peerFigures[peerId] {
+                    applyMaterials(figure, color: UIColor(red: 0.3, green: 0.8, blue: 1.0, alpha: 0.85), occluded: occluded)
+                }
+                if let nameplate = peerNameplates[peerId] {
+                    applyMaterials(nameplate, color: .white, occluded: occluded)
+                }
+            }
+        }
+    }
+
+    private func applyMaterials(_ entity: Entity, color: UIColor, occluded: Bool) {
+        for child in entity.children {
+            if let model = child as? ModelEntity {
+                if occluded {
+                    var mat = UnlitMaterial()
+                    mat.color = .init(tint: color.withAlphaComponent(0.2))
+                    model.model?.materials = [mat]
+                } else {
+                    var mat = SimpleMaterial()
+                    mat.color = .init(tint: color)
+                    model.model?.materials = [mat]
+                }
+            }
+            applyMaterials(child, color: color, occluded: occluded)
+        }
+    }
+
+    private func isPeerOccluded(cameraPos: SIMD3<Float>, peerPos: SIMD3<Float>) -> Bool {
+        let ray = peerPos - cameraPos
+        let rayLen = simd_length(ray)
+        guard rayLen > 0.3 else { return false }
+        let rayDir = ray / rayLen
+
+        // Check walls
+        for wall in ARState.shared.walls {
+            let wallNormal = SIMD3<Float>(-wall.xDirXZ.y, 0, wall.xDirXZ.x)
+            let denom = simd_dot(rayDir, wallNormal)
+            guard abs(denom) > 0.001 else { continue }
+
+            let t = simd_dot(wall.center - cameraPos, wallNormal) / denom
+            guard t > 0.2 && t < rayLen - 0.2 else { continue }
+
+            let hitPoint = cameraPos + rayDir * t
+            let localOffset = hitPoint - wall.center
+            let alongWall = abs(simd_dot(SIMD3<Float>(wall.xDirXZ.x, 0, wall.xDirXZ.y), localOffset))
+            let alongHeight = abs(localOffset.y)
+
+            if alongWall <= wall.width / 2 && alongHeight <= wall.height / 2 {
+                return true
+            }
+        }
+
+        // Check floors (horizontal planes between camera and peer)
+        for floor in ARState.shared.floors {
+            let floorY = floor.center.y
+            // Floor normal is (0, 1, 0)
+            guard abs(rayDir.y) > 0.001 else { continue }
+            let t = (floorY - cameraPos.y) / rayDir.y
+            guard t > 0.2 && t < rayLen - 0.2 else { continue }
+
+            let hitPoint = cameraPos + rayDir * t
+            let localOffset = SIMD2<Float>(hitPoint.x - floor.center.x, hitPoint.z - floor.center.z)
+            let alongX = abs(simd_dot(floor.xDirXZ, localOffset))
+            let perpDir = SIMD2<Float>(-floor.xDirXZ.y, floor.xDirXZ.x)
+            let alongZ = abs(simd_dot(perpDir, localOffset))
+
+            if alongX <= floor.widthX / 2 && alongZ <= floor.depthZ / 2 {
+                return true
+            }
+        }
+
+        return false
     }
 
     private func pruneStalePeers() {
@@ -786,73 +922,125 @@ class Coordinator: NSObject, ARSessionDelegate {
         for id in Array(peerAnchors.keys) where !activeIds.contains(id) {
             peerAnchors[id]?.removeFromParent()
             peerAnchors.removeValue(forKey: id)
+            peerFigures.removeValue(forKey: id)
+            peerNameplates.removeValue(forKey: id)
+            peerCallsigns.removeValue(forKey: id)
+            peerOccluded.removeValue(forKey: id)
+            peerTrailAnchors[id]?.removeFromParent()
+            peerTrailAnchors.removeValue(forKey: id)
+            peerTrailCounts.removeValue(forKey: id)
         }
     }
 
-    // MARK: - Auto-Pin from Object Detection
+    // MARK: - Peer AR Trails
 
-    func processAutoPin(frame: ARFrame) {
-        let objects = ARState.shared.detectedObjects
-        let now = frame.timestamp
-        var newTracker: [String: (center: CGPoint, firstSeen: TimeInterval)] = [:]
+    private static let trailPalette: [UIColor] = [
+        UIColor(red: 0.91, green: 0.40, blue: 0.35, alpha: 1),
+        UIColor(red: 0.36, green: 0.56, blue: 0.84, alpha: 1),
+        UIColor(red: 0.67, green: 0.28, blue: 0.74, alpha: 1),
+        UIColor(red: 0.15, green: 0.78, blue: 0.85, alpha: 1),
+        UIColor(red: 1.0,  green: 0.44, blue: 0.26, alpha: 1),
+        UIColor(red: 0.55, green: 0.76, blue: 0.29, alpha: 1),
+    ]
 
-        for obj in objects {
-            let center = CGPoint(x: obj.normalizedBounds.midX, y: obj.normalizedBounds.midY)
-
-            var matched = false
-            for (key, tracked) in detectionTracker where key.hasPrefix(obj.type) {
-                let dist = hypot(center.x - tracked.center.x, center.y - tracked.center.y)
-                if dist < 0.1 {
-                    newTracker[key] = (center: center, firstSeen: tracked.firstSeen)
-                    let elapsed = now - tracked.firstSeen
-
-                    if elapsed >= autoPinDelay && !isRegionPinned(center) {
-                        autoPinAt(center: center, label: obj.type)
-                        autoPinnedRegions.append(center)
-                    }
-                    matched = true
-                    break
-                }
-            }
-
-            if !matched {
-                let key = "\(obj.type)_\(Int.random(in: 0...9999))"
-                newTracker[key] = (center: center, firstSeen: now)
-            }
-        }
-        detectionTracker = newTracker
+    private func trailColor(for peerId: String) -> UIColor {
+        Self.trailPalette[abs(peerId.hashValue) % Self.trailPalette.count]
     }
 
-    private func isRegionPinned(_ center: CGPoint) -> Bool {
-        autoPinnedRegions.contains { p in hypot(center.x - p.x, center.y - p.y) < 0.15 }
-    }
-
-    private func autoPinAt(center: CGPoint, label: String) {
+    private func updatePeerTrails() {
         guard let arView = arView else { return }
-        let screenSize = arView.bounds.size
-        let screenPoint = CGPoint(
-            x: center.x * screenSize.width,
-            y: (1 - center.y) * screenSize.height
-        )
+        let peers = ARState.shared.peers
 
-        let results = arView.raycast(from: screenPoint, allowing: .estimatedPlane, alignment: .any)
-        let position: SIMD3<Float>
-        if let hit = results.first {
-            let c = hit.worldTransform.columns.3
-            position = SIMD3<Float>(c.x, c.y, c.z)
-        } else if let frame = arView.session.currentFrame {
-            let cam = frame.camera.transform
-            let fwd = SIMD3<Float>(-cam.columns.2.x, -cam.columns.2.y, -cam.columns.2.z)
-            let org = SIMD3<Float>(cam.columns.3.x, cam.columns.3.y, cam.columns.3.z)
-            position = org + simd_normalize(fwd) * 3.0
-        } else { return }
+        for (peerId, state) in peers {
+            let count = state.trajectory.count
+            // Only rebuild when 5+ new points arrive
+            if count == (peerTrailCounts[peerId] ?? 0) { continue }
+            if count - (peerTrailCounts[peerId] ?? 0) < 5 && count > 5 { continue }
 
-        // Don't pin too close to existing pins
-        let tooClose = ARState.shared.pins.contains { simd_distance($0.position, position) < 1.5 }
-        guard !tooClose else { return }
+            // Remove old trail anchor
+            peerTrailAnchors[peerId]?.removeFromParent()
+            peerTrailAnchors.removeValue(forKey: peerId)
 
-        ARState.shared.addPin(position: position, label: label, color: .white)
-        NetworkingManager.shared.sendPin(position: position, label: label)
+            if let entity = makeTrailEntity(trajectory: state.trajectory, color: trailColor(for: peerId)) {
+                let anchor = AnchorEntity(world: .zero)
+                anchor.addChild(entity)
+                arView.scene.addAnchor(anchor)
+                peerTrailAnchors[peerId] = anchor
+            }
+            peerTrailCounts[peerId] = count
+        }
+    }
+
+    private func makeTrailEntity(trajectory: [simd_float4x4], color: UIColor) -> ModelEntity? {
+        // Estimate how far the camera is above the floor so we can offset trail to foot level
+        let cameraHeight: Float
+        if let floorY = estimatedFloorY,
+           let frame = arView?.session.currentFrame {
+            cameraHeight = frame.camera.transform.columns.3.y - floorY
+        } else {
+            cameraHeight = 1.5 // reasonable fallback
+        }
+        let halfWidth: Float = 0.03
+
+        // Deduplicate points, keeping actual Y (offset to foot level)
+        var pts: [SIMD3<Float>] = []
+        for t in trajectory {
+            let footY = t.columns.3.y - cameraHeight + 0.02
+            let p = SIMD3<Float>(t.columns.3.x, footY, t.columns.3.z)
+            if let last = pts.last {
+                let dx = p.x - last.x, dy = p.y - last.y, dz = p.z - last.z
+                guard dx * dx + dy * dy + dz * dz > 0.0001 else { continue }
+            }
+            pts.append(p)
+        }
+        guard pts.count >= 2 else { return nil }
+
+        // Build a ribbon mesh that follows the 3D path
+        var positions: [SIMD3<Float>] = []
+        var indices: [UInt32] = []
+        var normals: [SIMD3<Float>] = []
+
+        for i in 0..<pts.count {
+            // Direction vector along the trail in XZ
+            let dir: SIMD2<Float>
+            if i == 0 {
+                dir = simd_normalize(SIMD2(pts[1].x - pts[0].x, pts[1].z - pts[0].z))
+            } else if i == pts.count - 1 {
+                dir = simd_normalize(SIMD2(pts[i].x - pts[i-1].x, pts[i].z - pts[i-1].z))
+            } else {
+                let raw = SIMD2(pts[i+1].x - pts[i-1].x, pts[i+1].z - pts[i-1].z)
+                let len = simd_length(raw)
+                dir = len > 0.001 ? raw / len : SIMD2(1, 0)
+            }
+
+            // Perpendicular in XZ plane
+            let perp = SIMD2(-dir.y, dir.x) * halfWidth
+            let y = pts[i].y
+
+            positions.append(SIMD3(pts[i].x + perp.x, y, pts[i].z + perp.y))
+            positions.append(SIMD3(pts[i].x - perp.x, y, pts[i].z - perp.y))
+            normals.append(SIMD3(0, 1, 0))
+            normals.append(SIMD3(0, 1, 0))
+        }
+
+        for i in 0..<(pts.count - 1) {
+            let base = UInt32(i * 2)
+            // Two triangles per quad
+            indices.append(contentsOf: [base, base + 2, base + 1])
+            indices.append(contentsOf: [base + 1, base + 2, base + 3])
+        }
+
+        var descriptor = MeshDescriptor(name: "trail")
+        descriptor.positions = MeshBuffer(positions)
+        descriptor.normals = MeshBuffer(normals)
+        descriptor.primitives = .triangles(indices)
+
+        guard let mesh = try? MeshResource.generate(from: [descriptor]) else { return nil }
+
+        var mat = UnlitMaterial()
+        mat.color = .init(tint: color.withAlphaComponent(0.75))
+        let entity = ModelEntity(mesh: mesh, materials: [mat])
+        return entity
     }
 
     // MARK: - Pin Placement via Raycast

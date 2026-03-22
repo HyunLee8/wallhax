@@ -44,6 +44,25 @@ enum PeerModel {
         return root
     }
 
+    static func makeNameplate(text: String) -> ModelEntity {
+        let mesh = MeshResource.generateText(
+            text,
+            extrusionDepth: 0.005,
+            font: .systemFont(ofSize: 0.06, weight: .bold),
+            containerFrame: .zero,
+            alignment: .center,
+            lineBreakMode: .byTruncatingTail
+        )
+        var mat = SimpleMaterial()
+        mat.color = .init(tint: .white)
+        let entity = ModelEntity(mesh: mesh, materials: [mat])
+        // Center the text horizontally
+        let bounds = entity.visualBounds(relativeTo: nil)
+        let textWidth = bounds.extents.x
+        entity.position.x = -textWidth / 2
+        return entity
+    }
+
     // MARK: - SceneKit node (used by SCNView overlay for pins etc.)
 
     static func makeNode(color: UIColor) -> SCNNode {

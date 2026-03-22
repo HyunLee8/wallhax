@@ -23,6 +23,7 @@ struct PeerMapState {
     var trajectory: [simd_float4x4]
     var heading: Float
     var lastSeen: Date
+    var callsign: String = ""
 }
 
 class ARState: ObservableObject {
@@ -40,7 +41,6 @@ class ARState: ObservableObject {
     @Published var peers: [String: PeerMapState] = [:]
     @Published var walls: [Wall3D] = []
     @Published var floors: [HFloor] = []
-    @Published var detectedObjects: [DetectedObject] = []
     @Published var originLocked: Bool = false
 
     private var lastPosition: SIMD3<Float>?
@@ -209,11 +209,12 @@ class ARState: ObservableObject {
         }
     }
 
-    func updatePeer(_ peerId: String, transform: simd_float4x4) {
+    func updatePeer(_ peerId: String, transform: simd_float4x4, callsign: String = "") {
         let pos2D = SIMD2<Float>(transform.columns.3.x, transform.columns.3.z)
         let yaw = atan2(-transform.columns.2.x, -transform.columns.2.z)
         DispatchQueue.main.async {
             var state = self.peers[peerId] ?? PeerMapState(trajectory: [], heading: 0, lastSeen: Date())
+            if !callsign.isEmpty { state.callsign = callsign }
             state.lastSeen = Date()
             if let last = state.trajectory.last {
                 let lastPos2D = SIMD2<Float>(last.columns.3.x, last.columns.3.z)
@@ -246,7 +247,6 @@ class ARState: ObservableObject {
             self.wallsByClient = [:]
             self.floorsByClient = [:]
             self.distanceWalked = 0
-            self.detectedObjects = []
             self.originLocked = false
             self.lastPosition = nil
             self.lastTrajectoryPosition = nil

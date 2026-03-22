@@ -37,22 +37,18 @@ struct MilitaryOperationsView: View {
     var body: some View {
         ZStack {
             // AR camera feed
-            ARViewContainer(isRecording: $isRecording, lidarEnabled: $lidarEnabled)
+            ARViewContainer(isRecording: $isRecording, lidarEnabled: $lidarEnabled, callsign: callsign)
                 .edgesIgnoringSafeArea(.all)
                 .allowsHitTesting(false)
 
             if arState.originLocked {
+            Group {
             // Recording edge glow
             if isRecording {
                 RecordingVignette(red: red, blinkOn: blinkOn)
                     .allowsHitTesting(false)
                     .ignoresSafeArea()
             }
-
-            // Detection overlays — the main feature
-            DetectionOverlayView(objects: arState.detectedObjects, red: red, gray: gray)
-                .allowsHitTesting(false)
-                .ignoresSafeArea()
 
             // Minimal crosshair
             MinimalCrosshair(gray: gray, red: red)
@@ -99,6 +95,8 @@ struct MilitaryOperationsView: View {
                     .padding(.bottom, 44)
             }
 
+            }
+            .transition(.opacity.combined(with: .scale(0.98)))
             } // end if originLocked
 
             // Pin wheel
@@ -158,7 +156,7 @@ struct MilitaryOperationsView: View {
                     .padding(.horizontal, 32)
                     .padding(.bottom, 80)
                 }
-                .transition(.opacity)
+                .transition(.opacity.combined(with: .scale(1.04)).combined(with: .blurReplace))
                 .zIndex(20)
                 .allowsHitTesting(false)
             }
@@ -449,94 +447,6 @@ struct MilitaryOperationsView: View {
             sendStatus = status
             if done { isSending = false; if success { hasRecording = false } }
         }
-    }
-}
-
-
-// MARK: - Detection Overlay View
-
-struct DetectionOverlayView: View {
-    let objects: [DetectedObject]
-    let red: Color
-    let gray: Color
-
-    var body: some View {
-        GeometryReader { geo in
-            ForEach(objects) { obj in
-                let rect = screenRect(obj.normalizedBounds, in: geo.size)
-
-                // Dashed outline
-                Rectangle()
-                    .strokeBorder(
-                        red,
-                        style: StrokeStyle(lineWidth: 1.5, dash: [8, 5])
-                    )
-                    .frame(width: rect.width, height: rect.height)
-                    .position(x: rect.midX, y: rect.midY)
-
-                // Corner ticks for emphasis
-                DetectionCorners(
-                    rect: rect,
-                    color: red,
-                    armLength: min(rect.width, rect.height) * 0.2
-                )
-
-                // Label
-                HStack(spacing: 4) {
-                    Image(systemName: "door.left.hand.open")
-                        .font(.system(size: 8, weight: .bold))
-                    Text("DOOR")
-                        .font(.system(size: 9, weight: .black, design: .monospaced))
-                        .tracking(2)
-                    Text(String(format: "%.0f%%", obj.confidence * 100))
-                        .font(.system(size: 8, weight: .regular, design: .monospaced))
-                        .foregroundColor(gray.opacity(0.6))
-                }
-                .foregroundColor(red)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 3)
-                .background(Color.black.opacity(0.6))
-                .cornerRadius(3)
-                .position(x: rect.midX, y: rect.minY - 12)
-            }
-        }
-    }
-
-    private func screenRect(_ normalized: CGRect, in size: CGSize) -> CGRect {
-        CGRect(
-            x: normalized.origin.x * size.width,
-            y: (1 - normalized.origin.y - normalized.height) * size.height,
-            width: normalized.width * size.width,
-            height: normalized.height * size.height
-        )
-    }
-}
-
-// MARK: - Detection Corner Ticks
-
-struct DetectionCorners: View {
-    let rect: CGRect
-    let color: Color
-    let armLength: CGFloat
-
-    var body: some View {
-        Canvas { ctx, _ in
-            let lw: CGFloat = 2
-            let corners: [(CGPoint, CGFloat, CGFloat)] = [
-                (CGPoint(x: rect.minX, y: rect.minY),  1,  1),
-                (CGPoint(x: rect.maxX, y: rect.minY), -1,  1),
-                (CGPoint(x: rect.minX, y: rect.maxY),  1, -1),
-                (CGPoint(x: rect.maxX, y: rect.maxY), -1, -1),
-            ]
-            for (origin, dx, dy) in corners {
-                var p = Path()
-                p.move(to: CGPoint(x: origin.x + armLength * dx, y: origin.y))
-                p.addLine(to: origin)
-                p.addLine(to: CGPoint(x: origin.x, y: origin.y + armLength * dy))
-                ctx.stroke(p, with: .color(color), lineWidth: lw)
-            }
-        }
-        .allowsHitTesting(false)
     }
 }
 

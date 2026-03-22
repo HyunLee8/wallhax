@@ -9,6 +9,7 @@ class NetworkingManager {
     static let shared = NetworkingManager()
 
     let clientId = UUID().uuidString
+    var callsign: String = ""
 
     private let staticServerIP: String? = "172.25.146.41"
 
@@ -33,7 +34,7 @@ class NetworkingManager {
 
     // MARK: - Events
 
-    var onPeerTransformReceived: ((String, simd_float4x4) -> Void)?
+    var onPeerTransformReceived: ((String, simd_float4x4, String) -> Void)?
     var onPinReceived: ((SIMD3<Float>, String) -> Void)?
     var onConnectionChanged: ((Bool) -> Void)?
     var onTCPConnectionChanged: ((Bool) -> Void)?
@@ -127,6 +128,7 @@ class NetworkingManager {
             ]
             let payload: [String: Any] = [
                 "client_id": self.clientId,
+                "callsign": self.callsign,
                 "timestamp": timestamp,
                 "position": [position.x, position.y, position.z],
                 "transform": matrix,
@@ -266,6 +268,7 @@ class NetworkingManager {
                     transformArray.count == 16
                 else { continue }
 
+                let peerCallsign = (payload["callsign"] as? String) ?? ""
                 let f = transformArray.map { $0.floatValue }
                 let matrix = simd_float4x4(
                     SIMD4<Float>(f[0],  f[1],  f[2],  f[3]),
@@ -275,7 +278,7 @@ class NetworkingManager {
                 )
 
                 DispatchQueue.main.async {
-                    self.onPeerTransformReceived?(peerId, matrix)
+                    self.onPeerTransformReceived?(peerId, matrix, peerCallsign)
                 }
             }
         }
