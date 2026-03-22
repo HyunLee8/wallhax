@@ -1,7 +1,51 @@
 import SceneKit
+import RealityKit
 import UIKit
 
 enum PeerModel {
+
+    // MARK: - RealityKit entity (rendered directly in ARView — orientation is automatic)
+
+    static func makeEntity(color: UIColor) -> Entity {
+        let root = Entity()
+        var mat = SimpleMaterial()
+        mat.color = .init(tint: color)
+
+        // Head
+        let head = ModelEntity(mesh: .generateSphere(radius: 0.10), materials: [mat])
+        head.position = [0, 0.80, 0]
+        root.addChild(head)
+
+        // Torso
+        let torso = ModelEntity(mesh: .generateBox(width: 0.06, height: 0.40, depth: 0.06, cornerRadius: 0.02), materials: [mat])
+        torso.position = [0, 0.40, 0]
+        root.addChild(torso)
+
+        // Left arm
+        let lArm = ModelEntity(mesh: .generateBox(width: 0.30, height: 0.044, depth: 0.044, cornerRadius: 0.015), materials: [mat])
+        lArm.position = [-0.15, 0.55, 0]
+        root.addChild(lArm)
+
+        // Right arm
+        let rArm = ModelEntity(mesh: .generateBox(width: 0.30, height: 0.044, depth: 0.044, cornerRadius: 0.015), materials: [mat])
+        rArm.position = [0.15, 0.55, 0]
+        root.addChild(rArm)
+
+        // Left leg
+        let lLeg = ModelEntity(mesh: .generateBox(width: 0.05, height: 0.45, depth: 0.05, cornerRadius: 0.015), materials: [mat])
+        lLeg.position = [-0.07, -0.28, 0]
+        root.addChild(lLeg)
+
+        // Right leg
+        let rLeg = ModelEntity(mesh: .generateBox(width: 0.05, height: 0.45, depth: 0.05, cornerRadius: 0.015), materials: [mat])
+        rLeg.position = [0.07, -0.28, 0]
+        root.addChild(rLeg)
+
+        return root
+    }
+
+    // MARK: - SceneKit node (used by SCNView overlay for pins etc.)
+
     static func makeNode(color: UIColor) -> SCNNode {
         let root = SCNNode()
         let mat = material(color: color)

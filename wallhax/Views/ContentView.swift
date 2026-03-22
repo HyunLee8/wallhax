@@ -621,7 +621,8 @@ class Coordinator: NSObject, ARSessionDelegate {
     var lastLidarEnabled: Bool = true
     var scnView: SCNView?
     var scnCameraNode = SCNNode()
-    var peerNodes: [String: SCNNode] = [:]
+    var peerNodes: [String: SCNNode] = [:]       // legacy, kept for compatibility
+    var peerAnchors: [String: AnchorEntity] = [:]  // RealityKit peer figures
     var pinNodes: [UUID: SCNNode] = [:]
     var pinDistanceNodes: [UUID: SCNNode] = [:]
     var distanceFrameCounter: Int = 0
@@ -733,8 +734,8 @@ class Coordinator: NSObject, ARSessionDelegate {
             let res = frame.camera.imageResolution
             let fy = frame.camera.intrinsics.columns.1.y
             scnCameraNode.camera?.fieldOfView = CGFloat(2 * atan(Float(res.height) / (2 * fy)) * 180 / .pi)
-            pruneStalePeerCylinders()
         }
+        pruneStalePeers()
     }
 
     // MARK: - Plane Streaming
@@ -762,26 +763,35 @@ class Coordinator: NSObject, ARSessionDelegate {
         ARState.shared.updateLocalPlanes(planesData)
     }
 
-    // MARK: - Peer Avatars
+    // MARK: - Peer Avatars (RealityKit — rendered directly in ARView)
 
     func updatePeer(_ peerId: String, transform: simd_float4x4) {
-        guard let scene = scnView?.scene else { return }
-        if peerNodes[peerId] == nil {
-            let node = PeerModel.makeNode(color: UIColor(red: 0.3, green: 0.8, blue: 1.0, alpha: 0.85))
-            scene.rootNode.addChildNode(node)
-            peerNodes[peerId] = node
+        guard let arView = arView else { return }
+
+        if peerAnchors[peerId] == nil {
+            let anchor = AnchorEntity(world: .zero)
+            let figure = PeerModel.makeEntity(color: UIColor(red: 0.3, green: 0.8, blue: 1.0, alpha: 0.85))
+            // Shift figure down so head aligns with peer's camera (phone) position
+            figure.position.y = -0.80
+            anchor.addChild(figure)
+            arView.scene.addAnchor(anchor)
+            peerAnchors[peerId] = anchor
         }
-        let node = peerNodes[peerId]!
-        let pos = transform.columns.3
-        node.simdPosition = SIMD3<Float>(pos.x, pos.y, pos.z)
-        node.simdEulerAngles = SIMD3<Float>(0, atan2(-transform.columns.2.x, -transform.columns.2.z), 0)
+
+        let anchor = peerAnchors[peerId]!
+        let pos = SIMD3<Float>(transform.columns.3.x, transform.columns.3.y, transform.columns.3.z)
+        let yaw = atan2(-transform.columns.2.x, -transform.columns.2.z)
+
+        anchor.position = pos
+        anchor.orientation = simd_quatf(angle: yaw, axis: [0, 1, 0])
     }
 
-    private func pruneStalePeerCylinders() {
+    private func pruneStalePeers() {
+        guard let arView = arView else { return }
         let activeIds = Set(ARState.shared.peers.keys)
-        for id in Array(peerNodes.keys) where !activeIds.contains(id) {
-            peerNodes[id]?.removeFromParentNode()
-            peerNodes.removeValue(forKey: id)
+        for id in Array(peerAnchors.keys) where !activeIds.contains(id) {
+            peerAnchors[id]?.removeFromParent()
+            peerAnchors.removeValue(forKey: id)
         }
     }
 
