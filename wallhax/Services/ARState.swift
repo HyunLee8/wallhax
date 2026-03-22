@@ -39,6 +39,7 @@ class ARState: ObservableObject {
     @Published var peers: [String: PeerMapState] = [:]
     @Published var walls: [Wall3D] = []
     @Published var floors: [HFloor] = []
+    @Published var detectedObjects: [DetectedObject] = []
 
     private var lastPosition: SIMD3<Float>?
     private var lastTrajectoryPosition: SIMD3<Float>?
@@ -242,6 +243,7 @@ class ARState: ObservableObject {
             self.wallsByClient = [:]
             self.floorsByClient = [:]
             self.distanceWalked = 0
+            self.detectedObjects = []
             self.lastPosition = nil
             self.lastTrajectoryPosition = nil
         }

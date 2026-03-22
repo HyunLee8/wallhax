@@ -28,74 +28,108 @@ struct MilitaryOperationsView: View {
     let timer      = Timer.publish(every: 1,   on: .main, in: .common).autoconnect()
     let blinkTimer = Timer.publish(every: 0.7, on: .main, in: .common).autoconnect()
 
-    private let hue    = Color(red: 0.55, green: 0.71, blue: 0.31)
-    private let hueDim = Color(red: 0.55, green: 0.71, blue: 0.31).opacity(0.45)
-    private let bg     = Color.black.opacity(0.72)
+    // ── Colors ──────────────────────────────────────────────────
+    private let gray     = Color(red: 0.60, green: 0.62, blue: 0.66)
+    private let grayDim  = Color(red: 0.60, green: 0.62, blue: 0.66).opacity(0.35)
+    private let red      = Color(red: 0.95, green: 0.20, blue: 0.18)
+    private let redDim   = Color(red: 0.95, green: 0.20, blue: 0.18).opacity(0.30)
 
     var body: some View {
-        GeometryReader { geo in
-            let isLandscape = geo.size.width > geo.size.height
+        ZStack {
+            // AR camera feed
+            ARViewContainer(isRecording: $isRecording, lidarEnabled: $lidarEnabled)
+                .edgesIgnoringSafeArea(.all)
+                .allowsHitTesting(false)
 
-            ZStack {
-                ARViewContainer(isRecording: $isRecording, lidarEnabled: $lidarEnabled)
-                    .edgesIgnoringSafeArea(.all)
+            // Recording edge glow
+            if isRecording {
+                RecordingVignette(red: red, blinkOn: blinkOn)
                     .allowsHitTesting(false)
+                    .ignoresSafeArea()
+            }
 
-                TacticalReticle(trackingState: arState.trackingState, hue: hue)
-                    .allowsHitTesting(false)
+            // Detection overlays — the main feature
+            DetectionOverlayView(objects: arState.detectedObjects, red: red, gray: gray)
+                .allowsHitTesting(false)
+                .ignoresSafeArea()
 
-                if isLandscape {
-                    landscapeLayout(geo: geo)
-                } else {
-                    portraitLayout
+            // Minimal crosshair
+            MinimalCrosshair(gray: gray, red: red)
+                .allowsHitTesting(false)
+
+            // HUD
+            VStack(spacing: 0) {
+                topStrip
+                    .padding(.top, 54)
+
+                HStack(alignment: .top) {
+                    // Minimap — floating in top-left under the strip
+                    MinimapView(
+                        trajectory: arState.trajectory,
+                        currentPos: SIMD2<Float>(arState.position.x, arState.position.z),
+                        heading: arState.heading,
+                        pins: arState.pins,
+                        peers: arState.peers,
+                        walls: arState.walls,
+                        accentColor: gray,
+                        onTap: {
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                                showFullMap = true
+                            }
+                        }
+                    )
+                    .padding(.leading, 14)
+                    .padding(.top, 8)
+
+                    Spacer()
                 }
 
+                Spacer()
+
+                if !sendStatus.isEmpty { sendBadge }
+
+                perfLine
+                    .padding(.bottom, 4)
+
+                CompassBar(heading: arState.heading, gray: gray, red: red)
+                    .padding(.bottom, 8)
+
+                controls
+                    .padding(.bottom, 44)
+            }
+
+            // Pin wheel
+            if showPinWheel {
                 PinWheelOverlay(
                     labels: useCase.pinLabels,
-                    accentColor: hue,
+                    accentColor: red,
                     selectedIndex: selectedPinIndex,
                     useCaseId: useCase.id
                 )
                 .allowsHitTesting(false)
                 .ignoresSafeArea()
-                .opacity(showPinWheel ? 1 : 0)
                 .zIndex(15)
+            }
 
-                if showFullMap {
-//                    FullMapView(
-//                        trajectory: arState.trajectory,
-//                        currentPos: SIMD2<Float>(arState.position.x, arState.position.z),
-//                        heading: arState.heading,
-//                        pins: arState.pins,
-//                        peers: arState.peers,
-//                        walls: arState.walls,
-//                        accentColor: hue,
-//                        onClose: {
-//                            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-//                                showFullMap = false
-//                            }
-//                        }
-//                    )
-//                    .transition(.opacity)
-//                    .zIndex(10)
-                    FullMap3DView(
-                        trajectory: arState.trajectory,
-                        currentPos: arState.position,
-                        heading: arState.heading,
-                        pins: arState.pins,
-                        peers: arState.peers,
-                        walls: arState.walls,
-                        floors: arState.floors,
-                        accentColor: hue,
-                        onClose: {
-                            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                                showFullMap = false
-                            }
+            // Full map
+            if showFullMap {
+                FullMap3DView(
+                    trajectory: arState.trajectory,
+                    currentPos: arState.position,
+                    heading: arState.heading,
+                    pins: arState.pins,
+                    peers: arState.peers,
+                    walls: arState.walls,
+                    floors: arState.floors,
+                    accentColor: gray,
+                    onClose: {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                            showFullMap = false
                         }
-                    )
-                    .transition(.opacity)
-                    .zIndex(10)
-                }
+                    }
+                )
+                .transition(.opacity)
+                .zIndex(10)
             }
         }
         .ignoresSafeArea()
@@ -109,614 +143,215 @@ struct MilitaryOperationsView: View {
         .onReceive(blinkTimer) { _ in blinkOn.toggle() }
     }
 
-    // MARK: - Portrait Layout
+    // MARK: - Top Strip
 
-    private var portraitLayout: some View {
+    private var topStrip: some View {
         VStack(spacing: 0) {
-            topBar(compact: false)
+            HStack(spacing: 0) {
+                // EXFIL
+                Button(action: { ARState.shared.reset(); onExit() }) {
+                    Text("\u{2039} EXFIL")
+                        .font(.system(size: 11, weight: .heavy, design: .monospaced))
+                        .tracking(2)
+                        .foregroundColor(red)
+                }
 
-            HStack(alignment: .top) {
-                leftPanel(mapSize: 140)
                 Spacer()
-                rightPanel(compact: false)
-            }
-            .padding(.top, 6)
 
-            Spacer()
-
-            CompassStrip(heading: arState.heading, hue: hue)
-                .padding(.bottom, 6)
-
-            sendStatusBadge
-
-            bottomControls(compact: false)
-        }
-        .padding(.top, 54)
-    }
-
-    // MARK: - Landscape Layout
-    // No side panels — everything in slim top + bottom strips, full center clear.
-
-    private func landscapeLayout(geo: GeometryProxy) -> some View {
-        VStack(spacing: 0) {
-            landscapeTopStrip
-            Spacer()
-            sendStatusBadge
-            landscapeBottomStrip
-        }
-    }
-
-    private var landscapeTopStrip: some View {
-        HStack(spacing: 0) {
-            // EXFIL
-            Button(action: { ARState.shared.reset(); onExit() }) {
-                HStack(spacing: 4) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 8, weight: .black, design: .monospaced))
-                    Text("EXFIL")
-                        .font(.system(size: 9, weight: .black, design: .monospaced))
-                        .tracking(2)
+                // Status pips
+                HStack(spacing: 14) {
+                    pip(trackingColor, "TRK")
+                    pip(arState.isRelayConnected ? gray : red,
+                        arState.isRelayConnected ? "NET" : "NET\u{2009}\u{2717}")
+                    if isRecording {
+                        pip(blinkOn ? red : red.opacity(0.15), "REC \(fmtTime(elapsed))")
+                    }
                 }
-                .foregroundColor(hue)
-                .padding(.horizontal, 9)
-                .padding(.vertical, 5)
-                .background(bg)
-                .overlay(RoundedRectangle(cornerRadius: 2).stroke(hue.opacity(0.5), lineWidth: 1))
-            }
 
-            stripDivider
+                Spacer()
 
-            // MGRS + AZM + ELEV
-            HStack(spacing: 10) {
-                stripStat("MGRS", mgrsCompact)
-                stripDivider
-                stripStat("AZM",  azimuthString)
-                stripStat("ELEV", String(format: "%+.1fM", arState.position.y))
-                stripStat("DIST", String(format: "%.1fM", arState.distanceWalked))
-            }
-
-            Spacer()
-
-            // Classification
-            Text("UNCLASSIFIED // FOUO")
-                .font(.system(size: 8, weight: .bold, design: .monospaced))
-                .tracking(1)
-                .foregroundColor(.yellow.opacity(0.7))
-
-            Spacer()
-
-            // Status dots
-            HStack(spacing: 8) {
-                statusDot(trackingColor, "TRK:\(trackingLabel)", trackingColor)
-                statusDot(arState.isRelayConnected ? hue : .red,
-                          arState.isRelayConnected ? "NET:UP" : "NET:DN",
-                          arState.isRelayConnected ? hue : .red)
-                if isRecording {
-                    statusDot(blinkOn ? .red : .red.opacity(0.2),
-                              "REC \(formatElapsed(elapsed))", .red)
-                }
-            }
-
-            stripDivider
-
-            // Callsign nameplate
-            VStack(alignment: .leading, spacing: 1) {
-                Text("OP")
-                    .font(.system(size: 6, weight: .regular, design: .monospaced))
-                    .tracking(2)
-                    .foregroundColor(hueDim)
-                Text(callsign.uppercased())
-                    .font(.system(size: 10, weight: .black, design: .monospaced))
-                    .foregroundColor(hue)
-                    .tracking(1)
-            }
-
-            stripDivider
-
-            // DTG
-            Text(zuluTime)
-                .font(.system(size: 12, weight: .black, design: .monospaced))
-                .foregroundColor(hue)
-                .padding(.leading, 4)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 6)
-        .background(Color.black.opacity(0.72))
-        .overlay(Rectangle().fill(hue.opacity(0.18)).frame(height: 1), alignment: .bottom)
-        .padding(.top, 36)
-    }
-
-    private var landscapeBottomStrip: some View {
-        HStack(alignment: .center, spacing: 0) {
-            // Tiny minimap
-            ZStack {
-                MapCanvas(
-                    trajectory: arState.trajectory,
-                    currentPos: SIMD2<Float>(arState.position.x, arState.position.z),
-                    heading: arState.heading,
-                    pins: arState.pins,
-                    peers: arState.peers,
-                    walls: arState.walls,
-                    scale: 90.0 / 2.0 / 8.0,
-                    offset: .zero,
-                    centerOnUser: true,
-                    showLabels: false,
-                    accentColor: hue
-                )
-                .frame(width: 90, height: 60)
-                .background(Color(red: 0.02, green: 0.06, blue: 0.02).opacity(0.9))
-                .clipShape(Rectangle())
-
-                TacticalCornerBrackets(color: hue.opacity(0.7), size: 90,
-                                       strokeWidth: 1, armLength: 10)
-                    .frame(width: 90, height: 90)   // brackets are square; clip will handle it
-                    .clipShape(Rectangle().size(width: 90, height: 60))
-
-                VStack {
-                    Text("N")
-                        .font(.system(size: 6, weight: .black, design: .monospaced))
-                        .foregroundColor(hue.opacity(0.7))
-                        .padding(.top, 2)
-                    Spacer()
-                }
-                .frame(width: 90, height: 60)
-            }
-            .overlay(Rectangle().stroke(hue.opacity(0.3), lineWidth: 1))
-            .onTapGesture {
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { showFullMap = true }
-            }
-            .padding(.trailing, 10)
-
-            stripDivider
-
-            // Controls
-            HStack(spacing: 8) {
-                controlsMark
-                controlsRecord(compact: true)
-                if hasRecording && !isRecording { controlsTX(compact: true) }
-            }
-            .padding(.horizontal, 10)
-
-            Spacer()
-
-            // Compass
-            CompassStrip(heading: arState.heading, hue: hue, width: 190)
-                .padding(.trailing, 14)
-        }
-        .padding(.vertical, 8)
-        .padding(.leading, 14)
-        .background(Color.black.opacity(0.72))
-        .overlay(Rectangle().fill(hue.opacity(0.18)).frame(height: 1), alignment: .top)
-    }
-
-    private var stripDivider: some View {
-        Rectangle()
-            .fill(hue.opacity(0.25))
-            .frame(width: 1, height: 18)
-            .padding(.horizontal, 8)
-    }
-
-    private func stripStat(_ label: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text(label)
-                .font(.system(size: 6, weight: .regular, design: .monospaced))
-                .tracking(1.5)
-                .foregroundColor(hueDim)
-            Text(value)
-                .font(.system(size: 10, weight: .bold, design: .monospaced))
-                .foregroundColor(hue)
-        }
-    }
-
-    private var mgrsCompact: String {
-        let e = Int(abs(arState.position.x) * 10) % 100000
-        let n = Int(abs(arState.position.z) * 10) % 100000
-        return String(format: "%05d %05d", e, n)
-    }
-
-    // MARK: - Top Bar
-
-    private func topBar(compact: Bool) -> some View {
-        HStack(spacing: 0) {
-            Button(action: { ARState.shared.reset(); onExit() }) {
-                HStack(spacing: 5) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 9, weight: .black, design: .monospaced))
-                    Text("EXFIL")
-                        .font(.system(size: 10, weight: .black, design: .monospaced))
-                        .tracking(2)
-                }
-                .foregroundColor(hue)
-                .padding(.horizontal, 10)
-                .padding(.vertical, compact ? 4 : 6)
-                .background(bg)
-                .overlay(RoundedRectangle(cornerRadius: 2).stroke(hue.opacity(0.5), lineWidth: 1))
-            }
-
-            Spacer()
-
-            Text("UNCLASSIFIED // FOUO")
-                .font(.system(size: 9, weight: .bold, design: .monospaced))
-                .tracking(1.5)
-                .foregroundColor(.yellow.opacity(0.75))
-
-            Spacer()
-
-            // Callsign nameplate
-            HStack(spacing: 5) {
-                Rectangle().fill(hue.opacity(0.5)).frame(width: 2, height: 14)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("OP")
-                        .font(.system(size: 6, weight: .regular, design: .monospaced))
-                        .tracking(2)
-                        .foregroundColor(hueDim)
+                // Callsign + DTG
+                HStack(spacing: 10) {
                     Text(callsign.uppercased())
-                        .font(.system(size: compact ? 10 : 12, weight: .black, design: .monospaced))
-                        .foregroundColor(hue)
+                        .font(.system(size: 11, weight: .black, design: .monospaced))
                         .tracking(1)
+                        .foregroundColor(gray)
+                    Text(zuluTime)
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .foregroundColor(gray.opacity(0.6))
                 }
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(hue.opacity(0.08))
-            .overlay(Rectangle().stroke(hue.opacity(0.25), lineWidth: 1))
+            .padding(.horizontal, 18)
+            .padding(.vertical, 8)
 
-            Rectangle().fill(hue.opacity(0.25)).frame(width: 1, height: 18).padding(.horizontal, 8)
+            // Thin red line
+            Rectangle().fill(red.opacity(0.35)).frame(height: 1)
+        }
+    }
 
-            VStack(alignment: .trailing, spacing: 1) {
-                Text(zuluTime)
-                    .font(.system(size: compact ? 11 : 14, weight: .black, design: .monospaced))
-                    .foregroundColor(hue)
-                Text("DTG")
-                    .font(.system(size: 7, weight: .regular, design: .monospaced))
-                    .tracking(2)
-                    .foregroundColor(hueDim)
+    // MARK: - Performance Line (tiny)
+
+    private var perfLine: some View {
+        HStack(spacing: 16) {
+            perfStat("FEAT", "\(arState.featureCount)")
+            perfStat("DIST", String(format: "%.1fm", arState.distanceWalked))
+            perfStat("PINS", "\(arState.pins.count)")
+        }
+        .padding(.horizontal, 20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func perfStat(_ label: String, _ value: String) -> some View {
+        HStack(spacing: 3) {
+            Text(label)
+                .font(.system(size: 8, weight: .regular, design: .monospaced))
+                .foregroundColor(grayDim)
+            Text(value)
+                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .foregroundColor(gray.opacity(0.6))
+        }
+    }
+
+    // MARK: - Controls
+
+    private var controls: some View {
+        HStack(spacing: 12) {
+            // Mark button
+            pillButton(
+                icon: "mappin",
+                label: "MARK",
+                fg: showPinWheel ? .white : gray,
+                border: showPinWheel ? red : gray.opacity(0.25)
+            )
+            .gesture(
+                LongPressGesture(minimumDuration: 0.3)
+                    .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .global))
+                    .onChanged { value in
+                        switch value {
+                        case .first: break
+                        case .second(let lp, let drag):
+                            if lp && !showPinWheel {
+                                withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) { showPinWheel = true }
+                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            }
+                            if let drag = drag { updatePinSelection(dragLoc: drag.location) }
+                        }
+                    }
+                    .onEnded { _ in
+                        if showPinWheel, let idx = selectedPinIndex {
+                            let label = useCase.pinLabels[idx].label
+                            ARState.shared.requestDropPin?(label, UIColor(gray))
+                            NetworkingManager.shared.sendPin(position: arState.position, label: label)
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        }
+                        withAnimation(.spring(response: 0.25)) { showPinWheel = false }
+                        selectedPinIndex = nil
+                    }
+            )
+
+            // Record — big center button
+            Button(action: toggleRecording) {
+                ZStack {
+                    Circle()
+                        .fill(isRecording ? red : Color.black.opacity(0.5))
+                        .frame(width: 62, height: 62)
+                        .overlay(Circle().stroke(isRecording ? red.opacity(0.6) : gray.opacity(0.25), lineWidth: 2))
+                        .shadow(color: isRecording ? red.opacity(0.4) : .clear, radius: 12)
+
+                    if isRecording {
+                        RoundedRectangle(cornerRadius: 3)
+                            .fill(Color.white)
+                            .frame(width: 18, height: 18)
+                    } else {
+                        Circle()
+                            .fill(red)
+                            .frame(width: 24, height: 24)
+                    }
+                }
+            }
+
+            // LiDAR toggle
+            Button(action: {
+                lidarLoading = true
+                lidarEnabled.toggle()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { lidarLoading = false }
+            }) {
+                pillButton(
+                    icon: "lidar.scanner",
+                    label: lidarEnabled ? "ON" : "OFF",
+                    fg: lidarEnabled ? gray : grayDim,
+                    border: lidarEnabled ? gray.opacity(0.3) : gray.opacity(0.12)
+                )
+            }
+            .disabled(lidarLoading)
+
+            // TX button
+            if hasRecording && !isRecording {
+                Button(action: sendToMac) {
+                    pillButton(
+                        icon: "arrow.up",
+                        label: "TX",
+                        fg: red,
+                        border: red.opacity(0.4)
+                    )
+                }
+                .disabled(isSending)
             }
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, compact ? 5 : 7)
-        .background(Color.black.opacity(0.65))
-        .overlay(Rectangle().fill(hue.opacity(0.18)).frame(height: 1), alignment: .bottom)
     }
 
-    // MARK: - Left Panel (portrait 140, landscape 100)
-
-    private func leftPanel(mapSize: CGFloat) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            ZStack {
-                MapCanvas(
-                    trajectory: arState.trajectory,
-                    currentPos: SIMD2<Float>(arState.position.x, arState.position.z),
-                    heading: arState.heading,
-                    pins: arState.pins,
-                    peers: arState.peers,
-                    walls: arState.walls,
-                    scale: mapSize / 2.0 / 8.0,
-                    offset: .zero,
-                    centerOnUser: true,
-                    showLabels: false,
-                    accentColor: hue
-                )
-                .frame(width: mapSize, height: mapSize)
-                .background(Color(red: 0.02, green: 0.06, blue: 0.02).opacity(0.92))
-                .clipShape(Rectangle())
-
-                TacticalCornerBrackets(color: hue.opacity(0.8), size: mapSize)
-
-                VStack {
-                    Text("N")
-                        .font(.system(size: 7, weight: .black, design: .monospaced))
-                        .foregroundColor(hue.opacity(0.7))
-                        .padding(.top, 3)
-                    Spacer()
-                }
-                .frame(width: mapSize, height: mapSize)
-
-                VStack {
-                    Spacer()
-                    HStack {
-                        Spacer()
-                        Image(systemName: "arrow.up.left.and.arrow.down.right")
-                            .font(.system(size: 7, weight: .bold))
-                            .foregroundColor(hue.opacity(0.5))
-                            .padding(4)
-                    }
-                }
-                .frame(width: mapSize, height: mapSize)
-            }
-            .overlay(Rectangle().stroke(hue.opacity(0.3), lineWidth: 1))
-            .onTapGesture {
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { showFullMap = true }
-            }
-
-            // MGRS block
-            tacPanel {
-                VStack(alignment: .leading, spacing: 4) {
-                    tacLabel("MGRS")
-                    Text(mgrsString)
-                        .font(.system(size: mapSize < 120 ? 10 : 12, weight: .bold, design: .monospaced))
-                        .foregroundColor(hue)
-                        .minimumScaleFactor(0.7)
-                        .lineLimit(1)
-                    Rectangle().fill(hue.opacity(0.15)).frame(height: 1)
-                    HStack(spacing: 8) {
-                        tacValueSmall("ELEV", String(format: "%+.1fM", arState.position.y))
-                        tacValueSmall("AZM", azimuthString)
-                    }
-                }
-                .padding(.horizontal, 7)
-                .padding(.vertical, 5)
-            }
-            .frame(width: mapSize)
+    private func pillButton(icon: String, label: String, fg: Color, border: Color) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: icon)
+                .font(.system(size: 12, weight: .semibold))
+            Text(label)
+                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                .tracking(1)
         }
-        .padding(.leading, 14)
-    }
-
-    // MARK: - Right Panel
-
-    private func rightPanel(compact: Bool) -> some View {
-        tacPanel {
-            if compact {
-                // Landscape: single compact column, no section headers
-                VStack(alignment: .leading, spacing: 5) {
-                    tacRow("DIST",  String(format: "%.1fM", arState.distanceWalked))
-                    tacRow("FEAT",  "\(arState.featureCount)")
-                    tacRow("MARKS", "\(arState.pins.count)")
-                    Rectangle().fill(hue.opacity(0.2)).frame(height: 1)
-                    statusDot(isRecording ? (blinkOn ? Color.red : Color.red.opacity(0.2)) : hueDim,
-                              isRecording ? (blinkOn ? "REC \(formatElapsed(elapsed))" : "REC \(formatElapsed(elapsed))") : "ISR STBY",
-                              isRecording ? .red : hueDim)
-                    statusDot(trackingColor, "TRK \(trackingLabel)", trackingColor)
-                    statusDot(arState.isRelayConnected ? hue : .red,
-                              arState.isRelayConnected ? "NET UP" : "NET DN",
-                              arState.isRelayConnected ? hue : .red)
-                }
-                .padding(.horizontal, 9)
-                .padding(.vertical, 7)
-            } else {
-                // Portrait: full panel with section headers
-                VStack(alignment: .leading, spacing: 0) {
-                    tacSectionHeader("OPERATOR STATUS")
-                    VStack(alignment: .leading, spacing: 6) {
-                        tacRow("DIST",   String(format: "%.1f M", arState.distanceWalked))
-                        tacRow("FEAT",   "\(arState.featureCount) PTS")
-                        tacRow("MARKS",  "\(arState.pins.count) PINS")
-                        tacRow("FRAMES", "\(frameCount)")
-                    }
-                    .padding(.bottom, 8)
-
-                    Rectangle().fill(hue.opacity(0.2)).frame(height: 1).padding(.vertical, 6)
-                    tacSectionHeader("SYSTEMS")
-
-                    VStack(alignment: .leading, spacing: 5) {
-                        statusDot(isRecording ? (blinkOn ? Color.red : Color.red.opacity(0.2)) : hueDim,
-                                  isRecording ? (blinkOn ? "ISR ● REC  \(formatElapsed(elapsed))" : "ISR ○ REC  \(formatElapsed(elapsed))") : "ISR  STANDBY",
-                                  isRecording ? .red : hueDim)
-                        statusDot(trackingColor, "TRK  \(trackingLabel)", trackingColor)
-                        statusDot(arState.isRelayConnected ? hue : .red,
-                                  "NET  \(arState.isRelayConnected ? "LINK UP" : "LINK DN")",
-                                  arState.isRelayConnected ? hue : .red)
-                    }
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-            }
-        }
-        .padding(.trailing, 14)
-    }
-
-    // MARK: - Bottom Controls (portrait)
-
-    private var bottomControls: some View { bottomControls(compact: false) }
-
-    private func bottomControls(compact: Bool) -> some View {
-        HStack(alignment: .center, spacing: 10) {
-            controlsMark
-            controlsRecord(compact: compact)
-            if hasRecording && !isRecording { controlsTX(compact: compact) }
-            controlsLidar(compact: compact)
-        }
+        .foregroundColor(fg)
         .padding(.horizontal, 14)
-        .padding(.bottom, compact ? 0 : 44)
+        .padding(.vertical, 10)
+        .background(Color.black.opacity(0.5))
+        .clipShape(Capsule())
+        .overlay(Capsule().stroke(border, lineWidth: 1))
     }
 
-    private func controlsLidar(compact: Bool) -> some View {
-        Button(action: {
-            lidarLoading = true
-            lidarEnabled.toggle()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { lidarLoading = false }
-        }) {
-            HStack(spacing: compact ? 4 : 6) {
-                if lidarLoading {
-                    ProgressView()
-                        .progressViewStyle(CircularProgressViewStyle(tint: hue))
-                        .scaleEffect(0.65)
-                        .frame(width: compact ? 10 : 12, height: compact ? 10 : 12)
-                } else {
-                    Image(systemName: "lidar.scanner")
-                        .font(.system(size: compact ? 10 : 12, weight: .bold))
-                }
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("LIDAR")
-                        .font(.system(size: compact ? 9 : 11, weight: .black, design: .monospaced))
-                        .tracking(1.5)
-                    Text(lidarLoading ? "LOADING" : lidarEnabled ? "TURN OFF" : "TURN ON")
-                        .font(.system(size: 7, weight: .regular, design: .monospaced))
-                        .foregroundColor(lidarLoading ? hueDim : lidarEnabled ? hue.opacity(0.8) : hueDim)
-                }
-            }
-            .foregroundColor(lidarEnabled && !lidarLoading ? hue : hueDim)
-            .padding(.horizontal, compact ? 10 : 14)
-            .padding(.vertical, compact ? 9 : 12)
-            .background(lidarEnabled ? hue.opacity(0.10) : bg)
-            .overlay(Rectangle().stroke(lidarEnabled ? hue.opacity(0.5) : hue.opacity(0.2), lineWidth: 1))
-        }
-        .disabled(lidarLoading)
-    }
+    // MARK: - Send Badge
 
-    // MARK: - Control Atoms
-
-    private var controlsMark: some View {
-        ZStack {
-            Rectangle()
-                .fill(showPinWheel ? hue.opacity(0.2) : bg)
-                .frame(width: 58, height: 48)
-                .overlay(Rectangle().stroke(hue.opacity(showPinWheel ? 1.0 : 0.4), lineWidth: 1))
-            VStack(spacing: 3) {
-                Image(systemName: "mappin")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundColor(showPinWheel ? .white : hue)
-                Text("MARK")
-                    .font(.system(size: 8, weight: .black, design: .monospaced))
-                    .tracking(1.5)
-                    .foregroundColor(showPinWheel ? .white : hueDim)
-            }
-        }
-        .scaleEffect(showPinWheel ? 1.05 : 1.0)
-        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: showPinWheel)
-        .gesture(
-            LongPressGesture(minimumDuration: 0.3)
-                .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .global))
-                .onChanged { value in
-                    switch value {
-                    case .first: break
-                    case .second(let longPressed, let drag):
-                        if longPressed && !showPinWheel {
-                            withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) { showPinWheel = true }
-                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                        }
-                        if let drag = drag { updatePinSelection(dragLoc: drag.location) }
-                    }
-                }
-                .onEnded { _ in
-                    if showPinWheel, let idx = selectedPinIndex {
-                        let label = useCase.pinLabels[idx].label
-                        ARState.shared.requestDropPin?(label, UIColor(hue))
-                        NetworkingManager.shared.sendPin(position: arState.position, label: label)
-                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    }
-                    withAnimation(.spring(response: 0.25)) { showPinWheel = false }
-                    selectedPinIndex = nil
-                }
-        )
-    }
-
-    private func controlsRecord(compact: Bool) -> some View {
-        Button(action: toggleRecording) {
-            HStack(spacing: 8) {
-                ZStack {
-                    if isRecording {
-                        RoundedRectangle(cornerRadius: 2)
-                            .fill(Color.red)
-                            .frame(width: 11, height: 11)
-                            .opacity(blinkOn ? 1 : 0.3)
-                    } else {
-                        Circle().stroke(hue, lineWidth: 2).frame(width: 13, height: 13)
-                        Circle().fill(hue.opacity(0.4)).frame(width: 7, height: 7)
-                    }
-                }
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(isRecording ? "HALT ISR" : "ISR REC")
-                        .font(.system(size: compact ? 10 : 12, weight: .black, design: .monospaced))
-                        .tracking(1.5)
-                    Text(isRecording ? formatElapsed(elapsed) : "STANDBY")
-                        .font(.system(size: 8, weight: .regular, design: .monospaced))
-                        .foregroundColor(isRecording ? .red.opacity(0.85) : hueDim)
-                }
-            }
-            .foregroundColor(isRecording ? .red : hue)
-            .padding(.horizontal, compact ? 12 : 18)
-            .padding(.vertical, compact ? 9 : 12)
-            .background(isRecording ? Color.red.opacity(0.12) : bg)
-            .overlay(Rectangle().stroke(isRecording ? Color.red.opacity(0.7) : hue.opacity(0.4), lineWidth: 1))
-        }
-    }
-
-    private func controlsTX(compact: Bool) -> some View {
-        Button(action: sendToMac) {
-            HStack(spacing: 7) {
-                if isSending {
-                    ProgressView()
-                        .progressViewStyle(CircularProgressViewStyle(tint: hue))
-                        .scaleEffect(0.7)
-                } else {
-                    Image(systemName: "arrow.up.to.line")
-                        .font(.system(size: 11, weight: .bold))
-                }
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(isSending ? "TX..." : "TX INTEL")
-                        .font(.system(size: compact ? 10 : 12, weight: .black, design: .monospaced))
-                        .tracking(1.5)
-                    Text(isSending ? "SENDING" : "UPLOAD")
-                        .font(.system(size: 8, weight: .regular, design: .monospaced))
-                        .foregroundColor(hueDim)
-                }
-            }
-            .foregroundColor(hue)
-            .padding(.horizontal, compact ? 12 : 16)
-            .padding(.vertical, compact ? 9 : 12)
-            .background(bg)
-            .overlay(Rectangle().stroke(hue.opacity(0.5), lineWidth: 1))
-        }
-        .disabled(isSending)
-    }
-
-    // MARK: - Send Status Badge
-
-    @ViewBuilder
-    private var sendStatusBadge: some View {
-        if !sendStatus.isEmpty {
-            HStack(spacing: 6) {
-                Image(systemName: "antenna.radiowaves.left.and.right")
-                    .font(.system(size: 9, weight: .bold))
-                Text(sendStatus)
-                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                    .tracking(1)
-            }
-            .foregroundColor(hue)
+    private var sendBadge: some View {
+        Text(sendStatus)
+            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+            .foregroundColor(gray)
             .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(bg)
-            .overlay(RoundedRectangle(cornerRadius: 3).stroke(hue.opacity(0.35), lineWidth: 1))
-            .cornerRadius(3)
+            .padding(.vertical, 5)
+            .background(Color.black.opacity(0.5))
+            .clipShape(Capsule())
             .padding(.bottom, 6)
+    }
+
+    // MARK: - Helpers
+
+    private func pip(_ color: Color, _ text: String) -> some View {
+        HStack(spacing: 4) {
+            Circle().fill(color).frame(width: 5, height: 5)
+            Text(text)
+                .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                .foregroundColor(color)
         }
-    }
-
-    // MARK: - Computed Values
-
-    private var mgrsString: String {
-        let e = Int(abs(arState.position.x) * 10) % 100000
-        let n = Int(abs(arState.position.z) * 10) % 100000
-        return String(format: "18T XS %05d %05d", e, n)
-    }
-
-    private var azimuthString: String {
-        let deg = (arState.heading * 180 / .pi + 360)
-            .truncatingRemainder(dividingBy: 360)
-        return String(format: "%03d°M", Int(deg))
     }
 
     private var trackingColor: Color {
         switch arState.trackingState {
-        case "normal":                       return hue
+        case "normal":                       return gray
         case "initializing", "relocalizing": return .yellow
-        default:                             return .red
+        default:                             return red
         }
     }
 
-    private var trackingLabel: String {
-        switch arState.trackingState {
-        case "normal":        return "NRM"
-        case "initializing":  return "INIT"
-        case "slow down":     return "MOT"
-        case "need features": return "FEAT"
-        case "relocalizing":  return "RELOC"
-        default:              return "ERR"
-        }
+    private func fmtTime(_ t: TimeInterval) -> String {
+        String(format: "%02d:%02d", Int(t) / 60, Int(t) % 60)
     }
-
-    // MARK: - Actions
 
     private func updateZuluTime() {
         var cal = Calendar(identifier: .gregorian)
@@ -726,10 +361,6 @@ struct MilitaryOperationsView: View {
                           cal.component(.hour,   from: now),
                           cal.component(.minute, from: now),
                           cal.component(.second, from: now))
-    }
-
-    private func formatElapsed(_ t: TimeInterval) -> String {
-        String(format: "%02d:%02d", Int(t) / 60, Int(t) % 60)
     }
 
     private var wheelCenter: CGPoint {
@@ -742,16 +373,15 @@ struct MilitaryOperationsView: View {
         let dx = dragLoc.x - wc.x
         let dy = dragLoc.y - wc.y
         guard sqrt(dx * dx + dy * dy) > 44 else { selectedPinIndex = nil; return }
-
         let count = useCase.pinLabels.count
         let step  = 2 * Double.pi / Double(count)
         let angle = Double(atan2(dy, dx))
         var best = 0; var bestDiff = Double.infinity
         for i in 0..<count {
-            let itemAngle = -Double.pi / 2 + Double(i) * step
-            var diff = abs(angle - itemAngle)
-            if diff > .pi { diff = 2 * .pi - diff }
-            if diff < bestDiff { bestDiff = diff; best = i }
+            let a = -Double.pi / 2 + Double(i) * step
+            var d = abs(angle - a)
+            if d > .pi { d = 2 * .pi - d }
+            if d < bestDiff { bestDiff = d; best = i }
         }
         let newIndex = bestDiff < step / 2 + 0.05 ? best : nil
         if newIndex != selectedPinIndex {
@@ -779,7 +409,7 @@ struct MilitaryOperationsView: View {
 
     private func sendToMac() {
         guard let sessionPath = SnapshotManager.shared.sessionPath else {
-            sendStatus = "NO INTEL DATA"; return
+            sendStatus = "NO DATA"; return
         }
         isSending = true
         NetworkingManager.shared.sendToMac(sessionPath: sessionPath) { done, success, status in
@@ -787,234 +417,229 @@ struct MilitaryOperationsView: View {
             if done { isSending = false; if success { hasRecording = false } }
         }
     }
+}
 
-    // MARK: - Sub-view Helpers
 
-    private func tacPanel<C: View>(@ViewBuilder _ content: () -> C) -> some View {
-        content()
-            .background(Color.black.opacity(0.68))
-            .overlay(Rectangle().stroke(hue.opacity(0.22), lineWidth: 1))
-    }
+// MARK: - Detection Overlay View
 
-    private func tacSectionHeader(_ text: String) -> some View {
-        HStack(spacing: 4) {
-            Rectangle().fill(hue.opacity(0.5)).frame(width: 3, height: 8)
-            Text(text)
-                .font(.system(size: 7, weight: .black, design: .monospaced))
-                .tracking(2)
-                .foregroundColor(hueDim)
+struct DetectionOverlayView: View {
+    let objects: [DetectedObject]
+    let red: Color
+    let gray: Color
+
+    var body: some View {
+        GeometryReader { geo in
+            ForEach(objects) { obj in
+                let rect = screenRect(obj.normalizedBounds, in: geo.size)
+
+                // Dashed outline
+                Rectangle()
+                    .strokeBorder(
+                        red,
+                        style: StrokeStyle(lineWidth: 1.5, dash: [8, 5])
+                    )
+                    .frame(width: rect.width, height: rect.height)
+                    .position(x: rect.midX, y: rect.midY)
+
+                // Corner ticks for emphasis
+                DetectionCorners(
+                    rect: rect,
+                    color: red,
+                    armLength: min(rect.width, rect.height) * 0.2
+                )
+
+                // Label
+                HStack(spacing: 4) {
+                    Image(systemName: "door.left.hand.open")
+                        .font(.system(size: 8, weight: .bold))
+                    Text("DOOR")
+                        .font(.system(size: 9, weight: .black, design: .monospaced))
+                        .tracking(2)
+                    Text(String(format: "%.0f%%", obj.confidence * 100))
+                        .font(.system(size: 8, weight: .regular, design: .monospaced))
+                        .foregroundColor(gray.opacity(0.6))
+                }
+                .foregroundColor(red)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(Color.black.opacity(0.6))
+                .cornerRadius(3)
+                .position(x: rect.midX, y: rect.minY - 12)
+            }
         }
-        .padding(.bottom, 6)
     }
 
-    private func tacRow(_ label: String, _ value: String) -> some View {
-        HStack(spacing: 0) {
-            Text(label)
-                .font(.system(size: 9, weight: .regular, design: .monospaced))
-                .tracking(1)
-                .foregroundColor(hueDim)
-                .frame(width: 40, alignment: .leading)
-            Text(value)
-                .font(.system(size: 12, weight: .bold, design: .monospaced))
-                .foregroundColor(hue)
+    private func screenRect(_ normalized: CGRect, in size: CGSize) -> CGRect {
+        CGRect(
+            x: normalized.origin.x * size.width,
+            y: (1 - normalized.origin.y - normalized.height) * size.height,
+            width: normalized.width * size.width,
+            height: normalized.height * size.height
+        )
+    }
+}
+
+// MARK: - Detection Corner Ticks
+
+struct DetectionCorners: View {
+    let rect: CGRect
+    let color: Color
+    let armLength: CGFloat
+
+    var body: some View {
+        Canvas { ctx, _ in
+            let lw: CGFloat = 2
+            let corners: [(CGPoint, CGFloat, CGFloat)] = [
+                (CGPoint(x: rect.minX, y: rect.minY),  1,  1),
+                (CGPoint(x: rect.maxX, y: rect.minY), -1,  1),
+                (CGPoint(x: rect.minX, y: rect.maxY),  1, -1),
+                (CGPoint(x: rect.maxX, y: rect.maxY), -1, -1),
+            ]
+            for (origin, dx, dy) in corners {
+                var p = Path()
+                p.move(to: CGPoint(x: origin.x + armLength * dx, y: origin.y))
+                p.addLine(to: origin)
+                p.addLine(to: CGPoint(x: origin.x, y: origin.y + armLength * dy))
+                ctx.stroke(p, with: .color(color), lineWidth: lw)
+            }
         }
-    }
-
-    private func tacLabel(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 7, weight: .black, design: .monospaced))
-            .tracking(2)
-            .foregroundColor(hueDim)
-    }
-
-    private func tacValueSmall(_ label: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text(label)
-                .font(.system(size: 7, weight: .regular, design: .monospaced))
-                .tracking(1.5)
-                .foregroundColor(hueDim)
-            Text(value)
-                .font(.system(size: 10, weight: .bold, design: .monospaced))
-                .foregroundColor(hue)
-        }
-    }
-
-    private func statusDot(_ dotColor: Color, _ text: String, _ textColor: Color) -> some View {
-        HStack(spacing: 5) {
-            Circle().fill(dotColor).frame(width: 5, height: 5)
-            Text(text)
-                .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                .foregroundColor(textColor)
-                .tracking(0.5)
-        }
+        .allowsHitTesting(false)
     }
 }
 
 
-// MARK: - Tactical Reticle
+// MARK: - Minimal Crosshair
 
-struct TacticalReticle: View {
-    let trackingState: String
-    let hue: Color
+struct MinimalCrosshair: View {
+    let gray: Color
+    let red: Color
 
     var body: some View {
         GeometryReader { geo in
             let cx = geo.size.width / 2
             let cy = geo.size.height / 2
+            let gap: CGFloat = 12
+            let len: CGFloat = 16
 
             ZStack {
-                TacticalCornerBrackets(color: hue.opacity(0.55), size: 96, strokeWidth: 1.5, armLength: 18)
-                    .position(x: cx, y: cy)
-
-                Circle()
-                    .stroke(hue.opacity(0.35), lineWidth: 1)
-                    .frame(width: 40, height: 40)
-                    .position(x: cx, y: cy)
-
-                let gap: CGFloat = 24
-                let len: CGFloat = 18
-                let w:   CGFloat = 1
-
-                Rectangle().fill(hue.opacity(0.85)).frame(width: w, height: len)
+                // Four thin lines
+                Rectangle().fill(gray.opacity(0.5)).frame(width: 1, height: len)
                     .position(x: cx, y: cy - gap - len / 2)
-                Rectangle().fill(hue.opacity(0.85)).frame(width: w, height: len)
+                Rectangle().fill(gray.opacity(0.5)).frame(width: 1, height: len)
                     .position(x: cx, y: cy + gap + len / 2)
-                Rectangle().fill(hue.opacity(0.85)).frame(width: len, height: w)
+                Rectangle().fill(gray.opacity(0.5)).frame(width: len, height: 1)
                     .position(x: cx - gap - len / 2, y: cy)
-                Rectangle().fill(hue.opacity(0.85)).frame(width: len, height: w)
+                Rectangle().fill(gray.opacity(0.5)).frame(width: len, height: 1)
                     .position(x: cx + gap + len / 2, y: cy)
 
-                Circle().fill(hue).frame(width: 3, height: 3)
+                // Red center dot
+                Circle().fill(red.opacity(0.85)).frame(width: 3, height: 3)
                     .position(x: cx, y: cy)
-
-                ForEach([1, 2, 3], id: \.self) { i in
-                    let yOff = CGFloat(i) * 8 + gap
-                    Rectangle().fill(hue.opacity(0.5)).frame(width: i == 2 ? 8 : 5, height: 0.8)
-                        .position(x: cx, y: cy - yOff)
-                    Rectangle().fill(hue.opacity(0.5)).frame(width: i == 2 ? 8 : 5, height: 0.8)
-                        .position(x: cx, y: cy + yOff)
-                }
-
-                Text(trackingStatusLabel)
-                    .font(.system(size: 8, weight: .semibold, design: .monospaced))
-                    .tracking(2)
-                    .foregroundColor(hue.opacity(0.65))
-                    .position(x: cx, y: cy + 68)
             }
         }
         .ignoresSafeArea()
     }
-
-    private var trackingStatusLabel: String {
-        switch trackingState {
-        case "normal":        return "TRACKING  NRM"
-        case "initializing":  return "TRACKING  INIT"
-        case "slow down":     return "TRACKING  MOT"
-        case "need features": return "TRACKING  FEAT"
-        case "relocalizing":  return "TRACKING  RELOC"
-        default:              return "TRACKING  ERR"
-        }
-    }
 }
 
 
-// MARK: - Tactical Corner Brackets
+// MARK: - Recording Vignette
 
-struct TacticalCornerBrackets: View {
-    let color: Color
-    var size: CGFloat
-    var strokeWidth: CGFloat = 1.2
-    var armLength: CGFloat  = 16
+struct RecordingVignette: View {
+    let red: Color
+    let blinkOn: Bool
 
     var body: some View {
-        Canvas { ctx, _ in
-            let s   = size
-            let arm = armLength
-            let corners: [(CGPoint, [CGPoint])] = [
-                (CGPoint(x: 0, y: 0), [CGPoint(x: arm, y: 0),   CGPoint(x: 0, y: arm)]),
-                (CGPoint(x: s, y: 0), [CGPoint(x: s-arm, y: 0), CGPoint(x: s, y: arm)]),
-                (CGPoint(x: 0, y: s), [CGPoint(x: arm, y: s),   CGPoint(x: 0, y: s-arm)]),
-                (CGPoint(x: s, y: s), [CGPoint(x: s-arm, y: s), CGPoint(x: s, y: s-arm)])
-            ]
-            for (origin, arms) in corners {
-                var path = Path()
-                path.move(to: arms[0])
-                path.addLine(to: origin)
-                path.addLine(to: arms[1])
-                ctx.stroke(path, with: .color(color), lineWidth: strokeWidth)
-            }
-        }
-        .frame(width: size, height: size)
-    }
-}
-
-
-// MARK: - Compass Strip
-
-struct CompassStrip: View {
-    let heading: Float
-    let hue: Color
-    var width: CGFloat = 280
-
-    private let stripHeight: CGFloat   = 28
-    private let degreesPerPoint: CGFloat = 0.9
-
-    var body: some View {
-        ZStack {
+        GeometryReader { geo in
             Rectangle()
-                .fill(Color.black.opacity(0.68))
-                .frame(width: width, height: stripHeight)
-                .overlay(Rectangle().stroke(hue.opacity(0.22), lineWidth: 1))
+                .fill(.clear)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 0)
+                        .strokeBorder(
+                            red.opacity(blinkOn ? 0.25 : 0.08),
+                            lineWidth: 3
+                        )
+                )
+        }
+    }
+}
+
+
+// MARK: - Compass Bar (slim)
+
+struct CompassBar: View {
+    let heading: Float
+    let gray: Color
+    let red: Color
+
+    private let w: CGFloat = 260
+    private let h: CGFloat = 22
+    private let dpp: CGFloat = 0.9
+
+    var body: some View {
+        let headingDeg = CGFloat((heading * 180 / .pi + 360)
+            .truncatingRemainder(dividingBy: 360))
+
+        ZStack {
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color.black.opacity(0.45))
+                .frame(width: w, height: h)
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(gray.opacity(0.12), lineWidth: 1))
 
             Canvas { ctx, size in
-                let centerX  = size.width / 2
-                let headingDeg = CGFloat((heading * 180 / .pi + 360)
-                    .truncatingRemainder(dividingBy: 360))
+                let cx = size.width / 2
 
-                for deg in stride(from: -180, through: 180, by: 5) {
-                    let d = CGFloat(deg)
-                    let x = centerX + d * degreesPerPoint
+                // Snap to nearest 5° tick, then offset by the fractional
+                // remainder so ticks scroll smoothly between snaps.
+                let base = floor(headingDeg / 5) * 5
+                let frac = (headingDeg - base) * dpp
+
+                for i in -30...30 {
+                    let worldDeg = Int(base) + i * 5
+                    let normDeg  = ((worldDeg % 360) + 360) % 360
+                    let x = cx + CGFloat(i * 5) * dpp - frac
                     guard x >= 0 && x <= size.width else { continue }
 
-                    let absDeg  = Int((headingDeg + d + 360).truncatingRemainder(dividingBy: 360))
-                    let isMajor = absDeg % 45 == 0
-                    let isMid   = absDeg % 15 == 0
-                    let tickH: CGFloat = isMajor ? 12 : (isMid ? 8 : 5)
-                    let alpha: Double  = isMajor ? 0.9 : (isMid ? 0.55 : 0.3)
+                    let major = normDeg % 45 == 0
+                    let mid   = normDeg % 15 == 0
+                    let tickH: CGFloat = major ? 10 : (mid ? 6 : 3)
+                    let alpha: Double  = major ? 0.7 : (mid ? 0.35 : 0.15)
 
                     var tick = Path()
                     tick.move(to:    CGPoint(x: x, y: size.height))
                     tick.addLine(to: CGPoint(x: x, y: size.height - tickH))
-                    ctx.stroke(tick, with: .color(hue.opacity(alpha)), lineWidth: isMajor ? 1.5 : 0.8)
+                    ctx.stroke(tick, with: .color(gray.opacity(alpha)),
+                               lineWidth: major ? 1.2 : 0.7)
 
-                    if isMajor {
-                        let idx   = (absDeg / 45) % 8
+                    if major {
+                        let idx = (normDeg / 45) % 8
                         let label = Text(["N","NE","E","SE","S","SW","W","NW"][idx])
-                            .font(.system(size: 8, weight: .bold, design: .monospaced))
-                        ctx.draw(label, at: CGPoint(x: x, y: size.height - 22))
+                            .font(.system(size: 7, weight: .bold, design: .monospaced))
+                        ctx.draw(label, at: CGPoint(x: x, y: 5))
                     }
                 }
             }
-            .frame(width: width, height: stripHeight)
-            .foregroundColor(hue.opacity(0.6))
+            .frame(width: w, height: h)
+            .foregroundColor(gray.opacity(0.5))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
 
+            // Red center indicator
             VStack(spacing: 0) {
-                Triangle().fill(hue).frame(width: 6, height: 4)
                 Spacer()
+                Triangle().fill(red).frame(width: 5, height: 3)
             }
-            .frame(height: stripHeight)
+            .frame(height: h)
 
+            // Bearing readout
             HStack {
                 Spacer()
-                Text(String(format: "%03d°M", Int((heading * 180 / .pi + 360)
-                    .truncatingRemainder(dividingBy: 360))))
-                    .font(.system(size: 9, weight: .black, design: .monospaced))
-                    .foregroundColor(hue)
-                    .padding(.trailing, 6)
+                Text(String(format: "%03d\u{00B0}", Int(headingDeg)))
+                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+                    .foregroundColor(gray.opacity(0.6))
+                    .padding(.trailing, 8)
             }
-            .frame(width: width)
+            .frame(width: w)
         }
-        .frame(width: width, height: stripHeight)
+        .frame(width: w, height: h)
     }
 }
 
