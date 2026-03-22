@@ -290,7 +290,7 @@ enum PeerModel {
             font: .systemFont(ofSize: 0.08, weight: .bold)
         )
         var mat = UnlitMaterial()
-        mat.color = .init(tint: .white)
+        mat.color = .init(tint: .black)
         let entity = ModelEntity(mesh: mesh, materials: [mat])
         // Center the text horizontally based on its actual bounds
         let bounds = entity.visualBounds(relativeTo: nil)

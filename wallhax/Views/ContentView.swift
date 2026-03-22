@@ -206,8 +206,9 @@ struct ContentView: View {
                             }
                             .onEnded { _ in
                                 if showPinWheel, let idx = selectedPinIndex {
-                                    let label = useCase.pinLabels[idx].label
-                                    ARState.shared.requestDropPin?(label, UIColor(accentColor))
+                                    let pin = useCase.pinLabels[idx]
+                                    let label = pin.label
+                                    ARState.shared.requestDropPin?(label, UIColor(pin.color))
                                     NetworkingManager.shared.sendPin(position: arState.position, label: label)
                                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
                                 }
@@ -588,12 +589,6 @@ struct ARViewContainer: UIViewRepresentable {
             coordinator?.dropPin(label: label, color: color)
         }
 
-        coordinator.subscriptions.append(
-            arView.scene.subscribe(to: SceneEvents.Update.self) { [weak coordinator] _ in
-                coordinator?.updatePinBobbing()
-            }
-        )
-
         runSession(arView, lidarEnabled: lidarEnabled)
         return arView
     }
@@ -637,11 +632,12 @@ class Coordinator: NSObject, ARSessionDelegate {
     var peerOccluded: [String: Bool] = [:]           // Whether peer is behind a wall/floor
     var peerDistanceLabels: [String: ModelEntity] = [:]  // Distance text below nameplate
     var peerLastDistanceStr: [String: String] = [:]      // Cached to avoid rebuilding every frame
+    var peerBackplates: [String: ModelEntity] = [:]      // Background plate behind nameplate
     var peerTrailAnchors: [String: AnchorEntity] = [:]  // RealityKit trail per peer
     var peerTrailCounts: [String: Int] = [:]             // Track point count to know when to rebuild
-    var pinNodes: [UUID: SCNNode] = [:]
-    var pinDistanceNodes: [UUID: SCNNode] = [:]
-    var distanceFrameCounter: Int = 0
+    var pinAnchors: [UUID: AnchorEntity] = [:]       // RealityKit pin markers
+    var pinLabels: [UUID: Entity] = [:]               // RealityKit pin labels
+    var pinDistanceFrameCounter: Int = 0
     var subscriptions: [Any] = []
     private var planeAnchors: [UUID: ARPlaneAnchor] = [:]
     private var planeFrameCounter = 0
@@ -738,7 +734,9 @@ class Coordinator: NSObject, ARSessionDelegate {
             let res = frame.camera.imageResolution
             let fy = frame.camera.intrinsics.columns.1.y
             scnCameraNode.camera?.fieldOfView = CGFloat(2 * atan(Float(res.height) / (2 * fy)) * 180 / .pi)
+
         }
+        updatePinLabels(cameraTransform: frame.camera.transform)
         updateFloorEstimate()
         pruneStalePeers()
         updatePeerTrails()
@@ -806,7 +804,7 @@ class Coordinator: NSObject, ARSessionDelegate {
             anchor.addChild(figure)
             let outline = PeerModel.makeOutlineEntity(color: UIColor(red: 1.0, green: 0.2, blue: 0.2, alpha: 0.85))
             outline.position.y = -0.80
-            outline.isEnabled = false  // hidden initially
+            outline.isEnabled = false
             anchor.addChild(outline)
             arView.scene.addAnchor(anchor)
             peerAnchors[peerId] = anchor
@@ -819,10 +817,27 @@ class Coordinator: NSObject, ARSessionDelegate {
             print("[Nameplate] Creating nameplate for peer \(peerId.prefix(8)): '\(callsign)'")
             // Remove old nameplate
             peerNameplates[peerId]?.removeFromParent()
+            peerBackplates.removeValue(forKey: peerId)
+            peerDistanceLabels.removeValue(forKey: peerId)
+            peerLastDistanceStr.removeValue(forKey: peerId)
+
             let nameplateContainer = Entity()
             let nameplate = PeerModel.makeNameplate(text: callsign)
             nameplateContainer.addChild(nameplate)
-            // Position directly above head (head sphere top is at y=0.10 above anchor)
+
+            // Add background plate (will be resized once distance label is added)
+            let nameBounds = nameplate.visualBounds(relativeTo: nameplate.parent)
+            let plateW = nameBounds.extents.x + 0.04
+            let plateH = nameBounds.extents.y + 0.14  // extra room for distance text
+            let plateMesh = MeshResource.generatePlane(width: plateW, height: plateH, cornerRadius: 0.01)
+            var plateMat = UnlitMaterial()
+            plateMat.color = .init(tint: UIColor(white: 1.0, alpha: 0.75))
+            let plate = ModelEntity(mesh: plateMesh, materials: [plateMat])
+            plate.position = SIMD3<Float>(0, nameBounds.center.y - 0.03, -0.003)  // slightly behind text
+            nameplateContainer.addChild(plate)
+            peerBackplates[peerId] = plate
+
+            // Position directly above head
             nameplateContainer.position = [0, 0.30, 0]
             peerAnchors[peerId]?.addChild(nameplateContainer)
             peerNameplates[peerId] = nameplateContainer
@@ -877,6 +892,15 @@ class Coordinator: NSObject, ARSessionDelegate {
                     nameplate.addChild(label)
                     peerDistanceLabels[peerId] = label
                     peerLastDistanceStr[peerId] = distStr
+
+                    // Resize backplate to fit both callsign + distance
+                    if let plate = peerBackplates[peerId] {
+                        let containerBounds = nameplate.visualBounds(relativeTo: nil)
+                        let plateW = containerBounds.extents.x + 0.04
+                        let plateH = containerBounds.extents.y + 0.04
+                        plate.model?.mesh = MeshResource.generatePlane(width: plateW, height: plateH, cornerRadius: 0.01)
+                        plate.position = SIMD3<Float>(0, containerBounds.center.y, -0.003)
+                    }
                 }
             }
 
@@ -961,6 +985,7 @@ class Coordinator: NSObject, ARSessionDelegate {
             peerOccluded.removeValue(forKey: id)
             peerDistanceLabels.removeValue(forKey: id)
             peerLastDistanceStr.removeValue(forKey: id)
+            peerBackplates.removeValue(forKey: id)
             peerTrailAnchors[id]?.removeFromParent()
             peerTrailAnchors.removeValue(forKey: id)
             peerTrailCounts.removeValue(forKey: id)
@@ -1088,236 +1113,74 @@ class Coordinator: NSObject, ARSessionDelegate {
                                      allowing: .estimatedPlane,
                                      alignment: .any)
 
+        // Determine floor Y: use detected floor or fallback to camera height minus ~1.5m
+        let floorY: Float
+        if let fy = estimatedFloorY {
+            floorY = fy
+        } else if let frame = arView.session.currentFrame {
+            floorY = frame.camera.transform.columns.3.y - 1.5
+        } else {
+            floorY = ARState.shared.position.y - 1.5
+        }
+
         let position: SIMD3<Float>
         if let hit = results.first {
             let c = hit.worldTransform.columns.3
-            position = SIMD3<Float>(c.x, c.y, c.z)
+            // Snap to floor Y so pin never floats
+            position = SIMD3<Float>(c.x, floorY, c.z)
         } else if let frame = arView.session.currentFrame {
+            // No raycast hit — project forward along camera direction onto floor plane
             let cam = frame.camera.transform
             let fwd = SIMD3<Float>(-cam.columns.2.x, -cam.columns.2.y, -cam.columns.2.z)
             let org = SIMD3<Float>(cam.columns.3.x, cam.columns.3.y, cam.columns.3.z)
-            position = org + simd_normalize(fwd) * 2.5
+            // Intersect camera ray with floor plane
+            let t = (floorY - org.y) / fwd.y
+            if t > 0.3 && t < 10.0 {
+                let hitPoint = org + fwd * t
+                position = SIMD3<Float>(hitPoint.x, floorY, hitPoint.z)
+            } else {
+                // Looking up or too far — place 2.5m ahead on the floor
+                let ahead = org + simd_normalize(SIMD3<Float>(fwd.x, 0, fwd.z)) * 2.5
+                position = SIMD3<Float>(ahead.x, floorY, ahead.z)
+            }
         } else {
-            position = ARState.shared.position
+            position = SIMD3<Float>(ARState.shared.position.x, floorY, ARState.shared.position.z)
         }
 
         ARState.shared.addPin(position: position, label: label, color: color)
     }
 
-    // MARK: - Pin Entity Creation
+    // MARK: - Pin Entity Creation (RealityKit — self-contained orientation)
 
     func addPinToScene(_ pin: MapPin, color: UIColor) {
-        guard let scene = scnView?.scene else { return }
+        guard let arView = arView else { return }
 
-        let pillarH: CGFloat = 0.8
-        let warmWhite = UIColor(red: 1.0, green: 0.97, blue: 0.92, alpha: 1.0)
+        // Pin marker (stick + sphere + ring)
+        let pinEntity = PinRenderer.makePinEntity(color: color)
+        let pinAnchor = AnchorEntity(world: pin.position)
+        pinAnchor.addChild(pinEntity)
+        arView.scene.addAnchor(pinAnchor)
+        pinAnchors[pin.id] = pinAnchor
 
-        let root = SCNNode()
-        root.position = SCNVector3(pin.position.x, pin.position.y, pin.position.z)
+        // Label (text + colored plate)
+        let labelEntity = PinRenderer.makeLabelEntity(text: pin.label, color: color)
+        let labelAnchor = AnchorEntity(world: SIMD3<Float>(pin.position.x, pin.position.y + 0.55, pin.position.z))
+        labelAnchor.addChild(labelEntity)
+        arView.scene.addAnchor(labelAnchor)
+        pinLabels[pin.id] = labelEntity
+    }
 
-        // ── Additive-blend helper ───────────────────────────────
-        // blendMode = .add makes each layer ADD brightness to the
-        // scene rather than painting over it. This is how real
-        // light works — overlapping glow builds up intensity, and
-        // you see right through the outer halo. Combined with
-        // emission (self-lit, ignores scene lighting) this creates
-        // genuine volumetric-looking light.
+    // MARK: - Pin Updates
 
-        func glowMaterial(color: UIColor, alpha: CGFloat) -> SCNMaterial {
-            let mat = SCNMaterial()
-            let c = color.withAlphaComponent(alpha)
-            mat.diffuse.contents = UIColor.clear
-            mat.emission.contents = c
-            mat.blendMode = .add
-            mat.writesToDepthBuffer = false
-            mat.readsFromDepthBuffer = false
-            mat.isDoubleSided = true
-            mat.transparent.contents = c
-            return mat
-        }
+    func updatePinLabels(cameraTransform: simd_float4x4) {
+        pinDistanceFrameCounter += 1
+        guard pinDistanceFrameCounter % 10 == 0 else { return }
 
-        // ── Core Pillar ─────────────────────────────────────────
-        // Tight, bright center — looks like a solid rod of light.
-        // Each layer slightly shorter than the last for taper.
-        let coreLayers: [(r: CGFloat, a: CGFloat, hs: CGFloat)] = [
-            (0.004, 1.00, 1.00),   // needle-bright center
-            (0.009, 0.85, 1.00),
-            (0.016, 0.60, 0.98),
-            (0.026, 0.40, 0.96),
-        ]
-        for layer in coreLayers {
-            let h = pillarH * layer.hs
-            let cyl = SCNCylinder(radius: layer.r, height: h)
-            cyl.radialSegmentCount = 16
-            cyl.materials = [glowMaterial(color: warmWhite, alpha: layer.a)]
-            let n = SCNNode(geometry: cyl)
-            n.position = SCNVector3(0, Float(h / 2), 0)
-            root.addChildNode(n)
-        }
-
-        // ── Outer Glow ──────────────────────────────────────────
-        // Wider, softer halos that get shorter toward the outside.
-        // With additive blending these are genuinely translucent —
-        // the AR camera feed shows right through them, tinted with
-        // warm light. This is the "defined edges but not solid" look.
-        let glowLayers: [(r: CGFloat, a: CGFloat, hs: CGFloat)] = [
-            (0.040, 0.28, 0.93),
-            (0.065, 0.16, 0.86),
-            (0.100, 0.09, 0.78),
-            (0.160, 0.045, 0.66),
-            (0.250, 0.018, 0.52),
-            (0.380, 0.006, 0.38),
-        ]
-        for layer in glowLayers {
-            let h = pillarH * layer.hs
-            let cyl = SCNCylinder(radius: layer.r, height: h)
-            cyl.radialSegmentCount = 24
-            cyl.materials = [glowMaterial(color: warmWhite, alpha: layer.a)]
-            let n = SCNNode(geometry: cyl)
-            n.position = SCNVector3(0, Float(h / 2), 0)
-            root.addChildNode(n)
-        }
-
-        // ── Ground Bloom ────────────────────────────────────────
-        // Pool of light on the ground — additive so it brightens
-        // the floor beneath rather than painting a white disc.
-        let bloomLayers: [(r: CGFloat, a: CGFloat)] = [
-            (0.05,  0.80),
-            (0.10,  0.45),
-            (0.18,  0.22),
-            (0.30,  0.10),
-            (0.50,  0.035),
-            (0.75,  0.010),
-        ]
-        for g in bloomLayers {
-            let disc = SCNCylinder(radius: g.r, height: 0.003)
-            disc.materials = [glowMaterial(color: warmWhite, alpha: g.a)]
-            let n = SCNNode(geometry: disc)
-            n.position = SCNVector3(0, 0.0015, 0)
-            root.addChildNode(n)
-        }
-
-        // ── Top Dissipation ─────────────────────────────────────
-        // The pillar doesn't just cut off — it feathers into
-        // nothing, like light scattering at the top of the crystal
-        // column.
-        let capLayers: [(r: CGFloat, a: CGFloat)] = [
-            (0.03, 0.25),
-            (0.08, 0.10),
-            (0.15, 0.03),
-        ]
-        for c in capLayers {
-            let disc = SCNCylinder(radius: c.r, height: 0.004)
-            disc.materials = [glowMaterial(color: warmWhite, alpha: c.a)]
-            let n = SCNNode(geometry: disc)
-            n.position = SCNVector3(0, Float(pillarH), 0)
-            root.addChildNode(n)
-        }
-
-        // ── Particle System — Ice Crystal Shimmer ───────────────
-        // Tiny bright particles drifting slowly upward inside the
-        // pillar, simulating the suspended ice crystals that cause
-        // real light pillars. Additive blend so they look like
-        // tiny points of reflected light, not solid dots.
-        let particles = SCNParticleSystem()
-        particles.particleLifeSpan = 3.0
-        particles.particleLifeSpanVariation = 1.5
-        particles.birthRate = 20
-        particles.warmupDuration = 2.0
-        particles.emissionDuration = .greatestFiniteMagnitude
-
-        particles.particleSize = 0.005
-        particles.particleSizeVariation = 0.003
-        particles.particleColor = warmWhite
-        particles.particleColorVariation = SCNVector4(0, 0, 0.05, 0)
-        particles.blendMode = .additive
-
-        let emitterShape = SCNCylinder(radius: 0.025, height: pillarH * 0.9)
-        particles.emitterShape = emitterShape
-        particles.birthLocation = .volume
-
-        particles.particleVelocity = 0.04
-        particles.particleVelocityVariation = 0.025
-        particles.emittingDirection = SCNVector3(0, 1, 0)
-        particles.spreadingAngle = 8
-
-        // Fade in and out so particles appear/disappear smoothly
-        let fadeIn = SCNParticlePropertyController(
-            animation: {
-                let anim = CAKeyframeAnimation()
-                anim.values = [0.0, 1.0, 1.0, 0.0]
-                anim.keyTimes = [0, 0.15, 0.8, 1.0]
-                anim.duration = 1.0
-                return anim
-            }()
+        PinRenderer.updatePins(
+            pinAnchors: pinAnchors,
+            pinLabels: pinLabels,
+            pins: ARState.shared.pins,
+            cameraTransform: cameraTransform
         )
-        particles.propertyControllers = [.opacity: fadeIn]
-
-        let particleNode = SCNNode()
-        particleNode.position = SCNVector3(0, Float(pillarH * 0.45), 0)
-        particleNode.addParticleSystem(particles)
-        root.addChildNode(particleNode)
-
-        // ── Grow Animation ──────────────────────────────────────
-        root.scale = SCNVector3(1, 0.001, 1)
-        scene.rootNode.addChildNode(root)
-        pinNodes[pin.id] = root
-
-        SCNTransaction.begin()
-        SCNTransaction.animationDuration = 0.9
-        SCNTransaction.animationTimingFunction =
-            CAMediaTimingFunction(name: .easeOut)
-        root.scale = SCNVector3(1, 1, 1)
-        SCNTransaction.commit()
-
-        addPinDistanceLabel(pin: pin)
-    }
-
-    private func addPinDistanceLabel(pin: MapPin) {
-        guard let scene = scnView?.scene else { return }
-
-        let textGeom = SCNText(string: pin.label + "\n– m", extrusionDepth: 0)
-        textGeom.font = UIFont.systemFont(ofSize: 0.14, weight: .bold)
-        textGeom.flatness = 0.005
-        textGeom.alignmentMode = CATextLayerAlignmentMode.center.rawValue
-
-        let mat = SCNMaterial()
-        mat.diffuse.contents = UIColor.clear
-        mat.emission.contents = UIColor(red: 1.0, green: 0.97, blue: 0.92, alpha: 1.0)
-        mat.blendMode = .add
-        mat.writesToDepthBuffer = false
-        mat.isDoubleSided = true
-        textGeom.materials = [mat]
-
-        let node = SCNNode(geometry: textGeom)
-        let (minB, maxB) = node.boundingBox
-        node.pivot = SCNMatrix4MakeTranslation((maxB.x - minB.x) / 2, 0, 0)
-
-        let billboard = SCNBillboardConstraint()
-        billboard.freeAxes = .all
-        node.constraints = [billboard]
-        node.position = SCNVector3(pin.position.x, pin.position.y + 0.9, pin.position.z)
-
-        scene.rootNode.addChildNode(node)
-        pinDistanceNodes[pin.id] = node
-    }
-
-    // MARK: - Idle Bob Animation + Distance Updates
-
-    func updatePinBobbing() {
-        distanceFrameCounter += 1
-        guard distanceFrameCounter % 30 == 0 else { return }
-
-        let cam = ARState.shared.position
-        for pin in ARState.shared.pins {
-            guard let node = pinDistanceNodes[pin.id],
-                  let textGeom = node.geometry as? SCNText else { continue }
-            let dx = pin.position.x - cam.x
-            let dy = pin.position.y - cam.y
-            let dz = pin.position.z - cam.z
-            let dist = sqrt(dx*dx + dy*dy + dz*dz)
-            let distStr = dist < 10 ? String(format: "%.1f m", dist) : String(format: "%.0f m", dist)
-            textGeom.string = pin.label + "\n" + distStr
-        }
     }
 }

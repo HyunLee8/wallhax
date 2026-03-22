@@ -9,12 +9,12 @@ extension UseCase {
         badge: "FIRE OPS",
         accentColor: Color(red: 0.95, green: 0.27, blue: 0.12),
         pinLabels: [
-            (label: "Fire",    icon: "flame.fill"),
-            (label: "Entry",   icon: "door.left.hand.open"),
-            (label: "Exit",    icon: "rectangle.portrait.and.arrow.right"),
-            (label: "Victim",  icon: "person.fill"),
-            (label: "Hazard",  icon: "exclamationmark.octagon.fill"),
-            (label: "Hydrant", icon: "drop.fill")
+            (label: "Fire",    icon: "flame.fill",                          color: .red),
+            (label: "Entry",   icon: "door.left.hand.open",                color: .green),
+            (label: "Exit",    icon: "rectangle.portrait.and.arrow.right", color: .blue),
+            (label: "Victim",  icon: "person.fill",                        color: .orange),
+            (label: "Hazard",  icon: "exclamationmark.octagon.fill",       color: .yellow),
+            (label: "Hydrant", icon: "drop.fill",                          color: .cyan)
         ]
     )
 }

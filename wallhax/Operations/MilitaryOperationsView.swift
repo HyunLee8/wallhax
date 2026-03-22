@@ -270,8 +270,9 @@ struct MilitaryOperationsView: View {
                     }
                     .onEnded { _ in
                         if showPinWheel, let idx = selectedPinIndex {
-                            let label = useCase.pinLabels[idx].label
-                            ARState.shared.requestDropPin?(label, UIColor(gray))
+                            let pin = useCase.pinLabels[idx]
+                            let label = pin.label
+                            ARState.shared.requestDropPin?(label, UIColor(pin.color))
                             NetworkingManager.shared.sendPin(position: arState.position, label: label)
                             UIImpactFeedbackGenerator(style: .light).impactOccurred()
                         }

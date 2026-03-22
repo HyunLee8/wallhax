@@ -4,7 +4,7 @@ import RealityKit
 import SwiftUI
 
 struct PinWheelOverlay: View {
-    let labels: [(label: String, icon: String)]
+    let labels: [(label: String, icon: String, color: Color)]
     let accentColor: Color
     let selectedIndex: Int?
     let useCaseId: String
@@ -84,27 +84,28 @@ struct PinWheelOverlay: View {
     // MARK: - Per-mode item
 
     @ViewBuilder
-    private func pinItem(item: (label: String, icon: String), selected: Bool) -> some View {
+    private func pinItem(item: (label: String, icon: String, color: Color), selected: Bool) -> some View {
+        let pinColor = item.color
         if isMilitary {
             // Sharp tactical badge
             VStack(spacing: 4) {
                 Image(systemName: item.icon)
                     .font(.system(size: selected ? 17 : 13, weight: .semibold))
-                    .foregroundColor(selected ? .black : accentColor.opacity(0.85))
+                    .foregroundColor(selected ? .black : pinColor.opacity(0.85))
                 Text(item.label.uppercased())
                     .font(.system(size: 7, weight: .black, design: .monospaced))
                     .tracking(0.6)
-                    .foregroundColor(selected ? .black.opacity(0.85) : accentColor.opacity(0.7))
+                    .foregroundColor(selected ? .black.opacity(0.85) : pinColor.opacity(0.7))
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
             }
             .padding(.horizontal, 6)
             .background(
                 RoundedRectangle(cornerRadius: 3)
-                    .fill(selected ? accentColor : accentColor.opacity(0.07))
+                    .fill(selected ? pinColor : pinColor.opacity(0.07))
                     .overlay(
                         RoundedRectangle(cornerRadius: 3)
-                            .stroke(selected ? accentColor : accentColor.opacity(0.40), lineWidth: selected ? 1.5 : 0.5)
+                            .stroke(selected ? pinColor : pinColor.opacity(0.40), lineWidth: selected ? 1.5 : 0.5)
                     )
             )
 
@@ -113,7 +114,7 @@ struct PinWheelOverlay: View {
             VStack(spacing: 4) {
                 Image(systemName: item.icon)
                     .font(.system(size: selected ? 22 : 17, weight: .bold))
-                    .foregroundColor(selected ? .white : .white.opacity(0.70))
+                    .foregroundColor(selected ? .white : pinColor.opacity(0.70))
                 Text(item.label)
                     .font(.system(size: 8, weight: .bold, design: .rounded))
                     .foregroundColor(selected ? .white : .white.opacity(0.55))
@@ -122,8 +123,8 @@ struct PinWheelOverlay: View {
             }
             .background(
                 Circle()
-                    .fill(selected ? accentColor.opacity(0.92) : Color.white.opacity(0.10))
-                    .overlay(Circle().stroke(selected ? accentColor : Color.white.opacity(0.18), lineWidth: selected ? 2 : 1))
+                    .fill(selected ? pinColor.opacity(0.92) : Color.white.opacity(0.10))
+                    .overlay(Circle().stroke(selected ? pinColor : Color.white.opacity(0.18), lineWidth: selected ? 2 : 1))
             )
 
         } else {
@@ -131,7 +132,7 @@ struct PinWheelOverlay: View {
             HStack(spacing: 6) {
                 Image(systemName: item.icon)
                     .font(.system(size: selected ? 15 : 12, weight: .semibold))
-                    .foregroundColor(selected ? .white : .white.opacity(0.65))
+                    .foregroundColor(selected ? .white : pinColor.opacity(0.65))
                 Text(item.label)
                     .font(.system(size: 10, weight: .semibold, design: .rounded))
                     .foregroundColor(selected ? .white : .white.opacity(0.60))
@@ -140,8 +141,8 @@ struct PinWheelOverlay: View {
             .padding(.horizontal, 10)
             .background(
                 Capsule()
-                    .fill(selected ? accentColor.opacity(0.90) : Color.white.opacity(0.08))
-                    .overlay(Capsule().stroke(selected ? accentColor : Color.white.opacity(0.13), lineWidth: 1))
+                    .fill(selected ? pinColor.opacity(0.90) : Color.white.opacity(0.08))
+                    .overlay(Capsule().stroke(selected ? pinColor : Color.white.opacity(0.13), lineWidth: 1))
             )
         }
     }
@@ -183,7 +184,7 @@ struct PinWheelOverlay: View {
             if let idx = selectedIndex {
                 Image(systemName: labels[idx].icon)
                     .font(.system(size: isMilitary ? 15 : 19, weight: .semibold))
-                    .foregroundColor(isMilitary ? accentColor : .white)
+                    .foregroundColor(isMilitary ? labels[idx].color : .white)
                     .transition(.scale.combined(with: .opacity))
             } else {
                 Image(systemName: isMilitary ? "scope" : isFirefighter ? "flame.fill" : "magnifyingglass")

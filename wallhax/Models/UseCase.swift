@@ -7,7 +7,7 @@ struct UseCase: Identifiable {
     let icon: String
     let badge: String
     let accentColor: Color
-    let pinLabels: [(label: String, icon: String)]
+    let pinLabels: [(label: String, icon: String, color: Color)]
 
     static let allCases: [UseCase] = [.military, .searchAndRescue, .firefighter]
 }
