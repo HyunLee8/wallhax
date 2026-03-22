@@ -142,7 +142,7 @@ class Visualizer:
         ax.zaxis.pane.set_edgecolor('#E8E8E8')
         ax.grid(True, alpha=0.3, color='#CCCCCC', linewidth=0.4)
         ax.set_xlabel('X (m)', fontsize=8, labelpad=8, color=C_LABEL)
-        ax.set_ylabel('Z (m)', fontsize=8, labelpad=8, color=C_LABEL)
+        ax.set_ylabel('-Z (m)', fontsize=8, labelpad=8, color=C_LABEL)
         ax.set_zlabel('Y (m)', fontsize=8, labelpad=8, color=C_LABEL)
         ax.tick_params(labelsize=7, colors='#AAAAAA')
 
@@ -151,7 +151,7 @@ class Visualizer:
         ax_top.grid(True, alpha=0.2, color='#DDDDDD', linewidth=0.4)
         ax_top.set_title('Top Down', fontsize=8, color=C_LABEL, pad=6)
         ax_top.set_xlabel('X', fontsize=7, color=C_LABEL)
-        ax_top.set_ylabel('Z', fontsize=7, color=C_LABEL)
+        ax_top.set_ylabel('Forward', fontsize=7, color=C_LABEL)
         ax_top.tick_params(labelsize=6, colors='#BBBBBB')
 
         ax_side.cla()
@@ -173,18 +173,18 @@ class Visualizer:
                 any_locked = True
 
             if traj.shape[0] >= 2:
-                ax.plot(traj[:, 0], traj[:, 2], traj[:, 1],
+                ax.plot(traj[:, 0], -traj[:, 2], traj[:, 1],
                         c=color, linewidth=1.8, alpha=0.9)
             if traj.shape[0] > 0:
-                ax.scatter(traj[-1, 0], traj[-1, 2], traj[-1, 1],
+                ax.scatter(traj[-1, 0], -traj[-1, 2], traj[-1, 1],
                            c=color, s=60, edgecolors='white',
                            linewidths=1.5, zorder=5, alpha=0.95)
                 all_trajs.append(traj)
 
             if traj.shape[0] >= 2:
-                ax_top.plot(traj[:, 0], traj[:, 2], c=color, linewidth=1.2, alpha=0.8)
+                ax_top.plot(traj[:, 0], -traj[:, 2], c=color, linewidth=1.2, alpha=0.8)
             if traj.shape[0] > 0:
-                ax_top.scatter(traj[-1, 0], traj[-1, 2], c=color, s=30,
+                ax_top.scatter(traj[-1, 0], -traj[-1, 2], c=color, s=30,
                                edgecolors='white', linewidths=1, zorder=5)
 
             if traj.shape[0] >= 2:
@@ -212,14 +212,14 @@ class Visualizer:
                     center - half_w * x_axis - half_h * z_axis,
                     center - half_w * x_axis + half_h * z_axis,
                 ])
-                # swap Y↔Z for Y-up display in matplotlib 3D
-                corners_3d = corners[:, [0, 2, 1]]
+                # swap Y↔Z for Y-up display in matplotlib 3D, negate Z
+                corners_3d = np.column_stack([corners[:, 0], -corners[:, 2], corners[:, 1]])
                 alpha = 0.18 if plane.get('alignment') == 'horizontal' else 0.12
                 poly3d = Poly3DCollection([corners_3d], alpha=alpha,
                                          facecolor=color, edgecolor=color,
                                          linewidth=0.5, zorder=2)
                 ax.add_collection3d(poly3d)
-                ax_top.fill(corners[:, 0], corners[:, 2],
+                ax_top.fill(corners[:, 0], -corners[:, 2],
                             color=color, alpha=alpha * 0.7, linewidth=0.4)
                 ax_side.fill(corners[:, 0], corners[:, 1],
                              color=color, alpha=alpha * 0.7, linewidth=0.4)
@@ -227,12 +227,12 @@ class Visualizer:
                 continue
 
         for pos, label in pins:
-            ax.scatter(pos[0], pos[2], pos[1], c='#FF9800', s=80, marker='v',
+            ax.scatter(pos[0], -pos[2], pos[1], c='#FF9800', s=80, marker='v',
                        edgecolors='#E65100', linewidths=1.0, zorder=7)
-            ax.text(pos[0], pos[2], pos[1], f' {label}', fontsize=7, color='#FF9800')
-            ax_top.scatter(pos[0], pos[2], c='#FF9800', s=40, marker='v',
+            ax.text(pos[0], -pos[2], pos[1], f' {label}', fontsize=7, color='#FF9800')
+            ax_top.scatter(pos[0], -pos[2], c='#FF9800', s=40, marker='v',
                            edgecolors='#E65100', linewidths=0.8, zorder=7)
-            ax_top.annotate(label, (pos[0], pos[2]), fontsize=6, color='#FF9800',
+            ax_top.annotate(label, (pos[0], -pos[2]), fontsize=6, color='#FF9800',
                             xytext=(4, 4), textcoords='offset points')
             ax_side.scatter(pos[0], pos[1], c='#FF9800', s=40, marker='v',
                             edgecolors='#E65100', linewidths=0.8, zorder=7)
@@ -242,7 +242,7 @@ class Visualizer:
             mid = combined.mean(axis=0)
             span = max((combined.max(axis=0) - combined.min(axis=0)).max() / 2, 1.0)
             ax.set_xlim(mid[0] - span, mid[0] + span)
-            ax.set_ylim(mid[2] - span, mid[2] + span)  # ARKit Z → matplotlib Y
+            ax.set_ylim(-mid[2] - span, -mid[2] + span)  # ARKit -Z → matplotlib Y
             ax.set_zlim(mid[1] - span, mid[1] + span)  # ARKit Y → matplotlib Z
 
         n_clients = len(snapshot)
