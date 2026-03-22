@@ -576,7 +576,7 @@ class Coordinator: NSObject, ARSessionDelegate {
     var lastLidarEnabled: Bool = true
     var scnView: SCNView?
     var scnCameraNode = SCNNode()
-    var peerCylinders: [String: SCNNode] = [:]
+    var peerNodes: [String: SCNNode] = [:]
     var pinAnchors: [UUID: AnchorEntity] = [:]
     var pinBobEntities: [UUID: (entity: Entity, phase: Float)] = [:]
     var pinDistanceNodes: [UUID: SCNNode] = [:]
@@ -692,27 +692,22 @@ class Coordinator: NSObject, ARSessionDelegate {
 
     func updatePeer(_ peerId: String, transform: simd_float4x4) {
         guard let scene = scnView?.scene else { return }
-        if peerCylinders[peerId] == nil {
-            let cylinder = SCNCylinder(radius: 0.06, height: 0.5)
-            let material = SCNMaterial()
-            material.diffuse.contents = UIColor(red: 0.3, green: 0.8, blue: 1.0, alpha: 0.85)
-            material.emission.contents = UIColor(red: 0.1, green: 0.4, blue: 0.8, alpha: 0.5)
-            material.readsFromDepthBuffer = false
-            material.writesToDepthBuffer = false
-            material.isDoubleSided = true
-            cylinder.materials = [material]
-            let node = SCNNode(geometry: cylinder)
+        if peerNodes[peerId] == nil {
+            let node = PeerModel.makeNode(color: UIColor(red: 0.3, green: 0.8, blue: 1.0, alpha: 0.85))
             scene.rootNode.addChildNode(node)
-            peerCylinders[peerId] = node
+            peerNodes[peerId] = node
         }
-        peerCylinders[peerId]!.simdTransform = transform
+        let node = peerNodes[peerId]!
+        let pos = transform.columns.3
+        node.simdPosition = SIMD3<Float>(pos.x, pos.y, pos.z)
+        node.simdEulerAngles = SIMD3<Float>(0, atan2(-transform.columns.2.x, -transform.columns.2.z), 0)
     }
 
     private func pruneStalePeerCylinders() {
         let activeIds = Set(ARState.shared.peers.keys)
-        for id in Array(peerCylinders.keys) where !activeIds.contains(id) {
-            peerCylinders[id]?.removeFromParentNode()
-            peerCylinders.removeValue(forKey: id)
+        for id in Array(peerNodes.keys) where !activeIds.contains(id) {
+            peerNodes[id]?.removeFromParentNode()
+            peerNodes.removeValue(forKey: id)
         }
     }
 
