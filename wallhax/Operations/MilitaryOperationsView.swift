@@ -99,6 +99,8 @@ struct MilitaryOperationsView: View {
                     .padding(.bottom, 44)
             }
 
+            } // end if originLocked
+
             // Pin wheel
             if showPinWheel {
                 PinWheelOverlay(
@@ -111,7 +113,6 @@ struct MilitaryOperationsView: View {
                 .ignoresSafeArea()
                 .zIndex(15)
             }
-            } // end if originLocked
 
             // Full map
             if showFullMap {
