@@ -7,14 +7,14 @@ extension UseCase {
         subtitle: "Tactical operations & site mapping",
         icon: "shield.fill",
         badge: "TACTICAL",
-        accentColor: Color(red: 0.55, green: 0.71, blue: 0.31),
+        accentColor: Color(red: 0.60, green: 0.62, blue: 0.66),
         pinLabels: [
             (label: "Objective",   icon: "scope"),
             (label: "Threat",      icon: "exclamationmark.triangle.fill"),
+            (label: "Door",        icon: "door.left.hand.open"),
+            (label: "Breach",      icon: "bolt.fill"),
             (label: "Rally",       icon: "person.3.fill"),
-            (label: "Cover",       icon: "shield.fill"),
-            (label: "Observation", icon: "eye.fill"),
-            (label: "Checkpoint",  icon: "checkmark.circle.fill")
+            (label: "IED",         icon: "flame.fill")
         ]
     )
 }
