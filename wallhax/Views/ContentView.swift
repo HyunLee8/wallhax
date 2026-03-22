@@ -275,6 +275,7 @@ struct ContentView: View {
             }
 
             // ── Pin wheel overlay ────────────────────────────────
+            } // end if originLocked
             PinWheelOverlay(
                 labels: useCase.pinLabels,
                 accentColor: accentColor,
@@ -285,8 +286,6 @@ struct ContentView: View {
             .ignoresSafeArea()
             .opacity(showPinWheel ? 1 : 0)
             .zIndex(15)
-
-            } // end if originLocked
 
             // ── Full map overlay ─────────────────────────────────
             if showFullMap {
@@ -671,25 +670,16 @@ class Coordinator: NSObject, ARSessionDelegate {
             let anchorMatrix = anchor.transform
             let position = anchorMatrix.columns.3
 
-            // Pick the anchor axis with the largest horizontal (XZ) projection.
-            // This is more robust than a fixed column with threshold fallback,
-            // because it works for markers on walls, floors, or tilted surfaces.
-            let col0 = simd_float3(anchorMatrix.columns.0.x, 0, anchorMatrix.columns.0.z)
-            let col1 = simd_float3(anchorMatrix.columns.1.x, 0, anchorMatrix.columns.1.z)
-            let col2 = simd_float3(anchorMatrix.columns.2.x, 0, anchorMatrix.columns.2.z)
-            let len0 = simd_length(col0)
-            let len1 = simd_length(col1)
-            let len2 = simd_length(col2)
-
-            var forward: simd_float3
-            if len1 >= len0 && len1 >= len2 {
-                forward = col1
-            } else if len0 >= len2 {
-                forward = col0
+            // Use the marker's X axis (column 0) projected onto XZ as the consistent forward.
+            // Both players scanning the same marker get the same world orientation.
+            let col0xz = simd_float3(anchorMatrix.columns.0.x, 0, anchorMatrix.columns.0.z)
+            let col2xz = simd_float3(anchorMatrix.columns.2.x, 0, anchorMatrix.columns.2.z)
+            let forward: simd_float3
+            if simd_length(col0xz) > 0.1 {
+                forward = simd_normalize(col0xz)
             } else {
-                forward = col2
+                forward = simd_normalize(col2xz)
             }
-            forward = simd_normalize(forward)
 
             let up = simd_float3(0, 1, 0)
             let right = simd_normalize(simd_cross(up, forward))
