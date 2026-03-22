@@ -17,6 +17,8 @@ env/
 # Project data outputs
 mapping/data/
 mapping/scans/
+mapping/processed/
+mapping/outputs/
 
 # IDE/editor
 .vscode/

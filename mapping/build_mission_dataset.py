@@ -135,9 +135,8 @@ def main():
                     ply_file.write("end_header\n")
                     
                     for pt in raw_points:
-                        # Flip Y and Z axes to match OpenCV cameras
-                        ply_file.write(f"{pt[0]} {-pt[1]} {-pt[2]} 128 128 128\n")
-                        
+                        ply_file.write(f"{pt[0]} {pt[1]} {pt[2]} 128 128 128\n")
+                    
                 points_found = True
                 break
             except Exception as e:
