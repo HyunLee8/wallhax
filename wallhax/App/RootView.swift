@@ -9,7 +9,6 @@ import SwiftUI
 
 private enum AppStage {
     case selection
-    case scanning(UseCase)
     case operational(UseCase)
 }
 
@@ -22,14 +21,6 @@ struct RootView: View {
             switch stage {
             case .selection:
                 UseCaseSelectionView { useCase in
-                    withAnimation(.spring(response: 0.45, dampingFraction: 0.88)) {
-                        stage = .scanning(useCase)
-                    }
-                }
-                .transition(.opacity)
-
-            case .scanning(let useCase):
-                MarkerScanView(useCase: useCase) {
                     withAnimation(.spring(response: 0.45, dampingFraction: 0.88)) {
                         stage = .operational(useCase)
                     }

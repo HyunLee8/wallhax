@@ -41,6 +41,7 @@ class ARState: ObservableObject {
     @Published var walls: [Wall3D] = []
     @Published var floors: [HFloor] = []
     @Published var detectedObjects: [DetectedObject] = []
+    @Published var originLocked: Bool = false
 
     private var lastPosition: SIMD3<Float>?
     private var lastTrajectoryPosition: SIMD3<Float>?
@@ -246,6 +247,7 @@ class ARState: ObservableObject {
             self.floorsByClient = [:]
             self.distanceWalked = 0
             self.detectedObjects = []
+            self.originLocked = false
             self.lastPosition = nil
             self.lastTrajectoryPosition = nil
         }

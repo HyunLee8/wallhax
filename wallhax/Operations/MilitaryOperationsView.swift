@@ -131,6 +131,34 @@ struct MilitaryOperationsView: View {
                 .transition(.opacity)
                 .zIndex(10)
             }
+
+            // ── Marker scan overlay ───────────────────────────────
+            if !arState.originLocked {
+                VStack(spacing: 0) {
+                    Spacer()
+                    VStack(spacing: 24) {
+                        ScannerCorners(color: gray, size: 220)
+                        VStack(spacing: 8) {
+                            Text("SCAN MARKER")
+                                .font(.system(size: 13, weight: .black, design: .monospaced))
+                                .tracking(2)
+                                .foregroundColor(.white)
+                            Text("Point camera at the ArUco marker to begin")
+                                .font(.system(size: 12, weight: .medium, design: .rounded))
+                                .foregroundColor(.white.opacity(0.55))
+                                .multilineTextAlignment(.center)
+                        }
+                    }
+                    .padding(32)
+                    .background(.ultraThinMaterial)
+                    .clipShape(RoundedRectangle(cornerRadius: 24))
+                    .padding(.horizontal, 32)
+                    .padding(.bottom, 80)
+                }
+                .transition(.opacity)
+                .zIndex(20)
+                .allowsHitTesting(false)
+            }
         }
         .ignoresSafeArea()
         .onReceive(timer) { _ in

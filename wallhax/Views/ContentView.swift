@@ -305,6 +305,51 @@ struct ContentView: View {
                 .transition(.opacity)
                 .zIndex(10)
             }
+
+            // ── Marker scan overlay ───────────────────────────────
+            if !arState.originLocked {
+                VStack(spacing: 0) {
+                    // Mode badge top
+                    HStack {
+                        Label(useCase.title.uppercased(), systemImage: useCase.icon)
+                            .font(.system(size: 11, weight: .black, design: .monospaced))
+                            .tracking(1.5)
+                            .foregroundColor(accentColor)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            .background(.ultraThinMaterial)
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                        Spacer()
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.top, 60)
+
+                    Spacer()
+
+                    VStack(spacing: 24) {
+                        ScannerCorners(color: accentColor, size: 220)
+
+                        VStack(spacing: 8) {
+                            Text("SCAN MARKER")
+                                .font(.system(size: 13, weight: .black, design: .monospaced))
+                                .tracking(2)
+                                .foregroundColor(.white)
+                            Text("Point camera at the ArUco marker to begin")
+                                .font(.system(size: 12, weight: .medium, design: .rounded))
+                                .foregroundColor(.white.opacity(0.55))
+                                .multilineTextAlignment(.center)
+                        }
+                    }
+                    .padding(32)
+                    .background(.ultraThinMaterial)
+                    .clipShape(RoundedRectangle(cornerRadius: 24))
+                    .padding(.horizontal, 32)
+                    .padding(.bottom, 80)
+                }
+                .transition(.opacity)
+                .zIndex(20)
+                .allowsHitTesting(false)
+            }
         }
         .onReceive(timer) { _ in
             if isRecording {
@@ -585,6 +630,8 @@ class Coordinator: NSObject, ARSessionDelegate {
     private var planeFrameCounter = 0
     private let planeSendEveryN = 60
 
+    private var originSet = false
+
     // Auto-pin tracking for detected objects
     private var detectionTracker: [String: (center: CGPoint, firstSeen: TimeInterval)] = [:]
     private var autoPinnedRegions: [CGPoint] = []
@@ -614,12 +661,29 @@ class Coordinator: NSObject, ARSessionDelegate {
             anchorEntity.addChild(entity)
             arView?.scene.addAnchor(anchorEntity)
 
+            guard !originSet else { continue }
+            originSet = true
+
             let anchorMatrix = anchor.transform
             let position = anchorMatrix.columns.3
 
-            var forward = simd_float3(anchorMatrix.columns.1.x, 0, anchorMatrix.columns.1.z)
-            if simd_length(forward) < 0.001 {
-                forward = simd_float3(anchorMatrix.columns.2.x, 0, anchorMatrix.columns.2.z)
+            // Pick the anchor axis with the largest horizontal (XZ) projection.
+            // This is more robust than a fixed column with threshold fallback,
+            // because it works for markers on walls, floors, or tilted surfaces.
+            let col0 = simd_float3(anchorMatrix.columns.0.x, 0, anchorMatrix.columns.0.z)
+            let col1 = simd_float3(anchorMatrix.columns.1.x, 0, anchorMatrix.columns.1.z)
+            let col2 = simd_float3(anchorMatrix.columns.2.x, 0, anchorMatrix.columns.2.z)
+            let len0 = simd_length(col0)
+            let len1 = simd_length(col1)
+            let len2 = simd_length(col2)
+
+            var forward: simd_float3
+            if len1 >= len0 && len1 >= len2 {
+                forward = col1
+            } else if len0 >= len2 {
+                forward = col0
+            } else {
+                forward = col2
             }
             forward = simd_normalize(forward)
 
@@ -633,6 +697,10 @@ class Coordinator: NSObject, ARSessionDelegate {
             gravityAlignedMatrix.columns.3 = position
 
             session.setWorldOrigin(relativeTransform: gravityAlignedMatrix)
+
+            DispatchQueue.main.async {
+                ARState.shared.originLocked = true
+            }
         }
     }
 
