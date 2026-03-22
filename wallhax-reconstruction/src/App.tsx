@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Canvas, extend, useThree } from '@react-three/fiber'
+import { Canvas, extend, useFrame, useThree } from '@react-three/fiber'
 import { Environment, OrbitControls } from '@react-three/drei'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import * as THREE from 'three'
@@ -53,6 +53,108 @@ function alignmentMatrix(alignment: ArkAlignment): THREE.Matrix4 {
 
 function transformTrajectoryPoint(p: TrajectoryPoint, matrix: THREE.Matrix4): THREE.Vector3 {
   return new THREE.Vector3(p.x, p.y, p.z).applyMatrix4(matrix)
+}
+
+function fitCameraToTrajectory(
+  camera: THREE.Camera,
+  controls: OrbitControlsImpl,
+  trajectory: TrajectoryPoint[],
+  matrix: THREE.Matrix4,
+) {
+  if (trajectory.length === 0) return
+
+  const bbox = new THREE.Box3()
+  for (const p of trajectory) {
+    bbox.expandByPoint(transformTrajectoryPoint(p, matrix))
+  }
+  const center = new THREE.Vector3()
+  bbox.getCenter(center)
+
+  const size = new THREE.Vector3()
+  bbox.getSize(size)
+  const maxDim = Math.max(size.x, size.y, size.z, 0.01)
+  const dist = maxDim * 1.8
+
+  camera.position.set(center.x + dist * 0.45, center.y + dist * 0.35, center.z + dist * 0.45)
+  controls.target.copy(center)
+  controls.update()
+}
+
+function fitCameraToLumaDefault(camera: THREE.Camera, controls: OrbitControlsImpl) {
+  controls.target.set(0, 0, 0)
+  camera.position.set(4, 3, 4)
+  controls.update()
+}
+
+function isTypingInFormControl(): boolean {
+  const el = document.activeElement
+  if (!el) return false
+  const tag = el.tagName
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true
+  return el instanceof HTMLElement && el.isContentEditable
+}
+
+function CameraKeyboardPan({ orbitRef }: { orbitRef: React.RefObject<OrbitControlsImpl | null> }) {
+  const { camera } = useThree()
+  const keys = useRef(new Set<string>())
+  const forward = useMemo(() => new THREE.Vector3(), [])
+  const right = useMemo(() => new THREE.Vector3(), [])
+  const up = useMemo(() => new THREE.Vector3(0, 1, 0), [])
+  const move = useMemo(() => new THREE.Vector3(), [])
+
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => {
+      if (isTypingInFormControl()) return
+      keys.current.add(e.code)
+    }
+    const up = (e: KeyboardEvent) => {
+      keys.current.delete(e.code)
+    }
+    const clear = () => keys.current.clear()
+    window.addEventListener('keydown', down)
+    window.addEventListener('keyup', up)
+    window.addEventListener('blur', clear)
+    return () => {
+      window.removeEventListener('keydown', down)
+      window.removeEventListener('keyup', up)
+      window.removeEventListener('blur', clear)
+    }
+  }, [])
+
+  useFrame((_, delta) => {
+    const ctl = orbitRef.current
+    if (!ctl || isTypingInFormControl()) return
+
+    const k = keys.current
+    const fast = k.has('ShiftLeft') || k.has('ShiftRight')
+    const speed = (fast ? 2.5 : 1) * 4 * delta
+
+    const mx = (k.has('KeyD') || k.has('ArrowRight') ? 1 : 0) - (k.has('KeyA') || k.has('ArrowLeft') ? 1 : 0)
+    const mz = (k.has('KeyW') || k.has('ArrowUp') ? 1 : 0) - (k.has('KeyS') || k.has('ArrowDown') ? 1 : 0)
+    const my = (k.has('KeyE') || k.has('PageUp') ? 1 : 0) - (k.has('KeyQ') || k.has('PageDown') ? 1 : 0)
+
+    if (mx === 0 && mz === 0 && my === 0) return
+
+    camera.getWorldDirection(forward)
+    forward.y = 0
+    if (forward.lengthSq() < 1e-10) {
+      forward.set(0, 0, -1)
+    } else {
+      forward.normalize()
+    }
+    right.crossVectors(forward, up).normalize()
+
+    move.set(0, 0, 0)
+    if (mx !== 0) move.addScaledVector(right, mx * speed)
+    if (mz !== 0) move.addScaledVector(forward, mz * speed)
+    move.y = my * speed
+
+    camera.position.add(move)
+    ctl.target.add(move)
+    ctl.update()
+  })
+
+  return null
 }
 
 type TrajectoryProps = {
@@ -143,34 +245,18 @@ function LumaInitialCamera({
 
 function CameraFitTrajectory({
   trajectory,
-  alignment,
+  matrix,
   orbitRef,
 }: {
   trajectory: TrajectoryPoint[]
-  alignment: ArkAlignment
+  matrix: THREE.Matrix4
   orbitRef: React.RefObject<OrbitControlsImpl | null>
 }) {
   const { camera } = useThree()
-  const matrix = useMemo(() => alignmentMatrix(alignment), [alignment])
 
   useEffect(() => {
     if (trajectory.length === 0 || !orbitRef.current) return
-
-    const bbox = new THREE.Box3()
-    for (const p of trajectory) {
-      bbox.expandByPoint(transformTrajectoryPoint(p, matrix))
-    }
-    const center = new THREE.Vector3()
-    bbox.getCenter(center)
-
-    const size = new THREE.Vector3()
-    bbox.getSize(size)
-    const maxDim = Math.max(size.x, size.y, size.z, 0.01)
-    const dist = maxDim * 1.8
-
-    camera.position.set(center.x + dist * 0.45, center.y + dist * 0.35, center.z + dist * 0.45)
-    orbitRef.current.target.copy(center)
-    orbitRef.current.update()
+    fitCameraToTrajectory(camera, orbitRef.current, trajectory, matrix)
   }, [trajectory, matrix, camera, orbitRef])
 
   return null
@@ -180,12 +266,31 @@ type SceneProps = {
   trajectory: TrajectoryPoint[]
   currentFrame: number
   alignment: ArkAlignment
+  fitViewRef: React.MutableRefObject<(() => void) | null>
 }
 
-function Scene({ trajectory, currentFrame, alignment }: SceneProps) {
+function Scene({ trajectory, currentFrame, alignment, fitViewRef }: SceneProps) {
+  const { camera } = useThree()
   const orbitRef = useRef<OrbitControlsImpl>(null)
   const lumaRef = useRef<LumaSplatsThree>(null)
   const hasTrajectory = trajectory.length > 0
+
+  const matrix = useMemo(() => alignmentMatrix(alignment), [alignment])
+
+  useEffect(() => {
+    fitViewRef.current = () => {
+      const ctl = orbitRef.current
+      if (!ctl) return
+      if (trajectory.length > 0) {
+        fitCameraToTrajectory(camera, ctl, trajectory, matrix)
+      } else {
+        fitCameraToLumaDefault(camera, ctl)
+      }
+    }
+    return () => {
+      fitViewRef.current = null
+    }
+  }, [camera, trajectory, matrix, fitViewRef])
 
   const euler = useMemo(
     () =>
@@ -222,8 +327,20 @@ function Scene({ trajectory, currentFrame, alignment }: SceneProps) {
         <CurrentLocationMarker pathData={trajectory} currentFrame={currentFrame} />
       </group>
 
-      <CameraFitTrajectory trajectory={trajectory} alignment={alignment} orbitRef={orbitRef} />
-      <OrbitControls ref={orbitRef} makeDefault />
+      <CameraFitTrajectory trajectory={trajectory} matrix={matrix} orbitRef={orbitRef} />
+      <CameraKeyboardPan orbitRef={orbitRef} />
+      <OrbitControls
+        ref={orbitRef}
+        makeDefault
+        screenSpacePanning
+        dampingFactor={0.08}
+        rotateSpeed={0.85}
+        zoomSpeed={1}
+        panSpeed={0.85}
+        minDistance={0.25}
+        maxDistance={200}
+        maxPolarAngle={Math.PI * 0.95}
+      />
     </>
   )
 }
@@ -235,6 +352,7 @@ export default function App() {
   const [isPlaying, setIsPlaying] = useState(false)
   const [playbackFps, setPlaybackFps] = useState(24)
   const [calibrationOpen, setCalibrationOpen] = useState(false)
+  const fitViewRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     fetch('/transforms.json')
@@ -297,7 +415,12 @@ export default function App() {
     <div className="app">
       <div className="canvas-wrap">
         <Canvas camera={{ position: [2, 2, 2], fov: 50 }} dpr={[1, 1.5]}>
-          <Scene trajectory={trajectory} currentFrame={currentFrame} alignment={alignment} />
+          <Scene
+            trajectory={trajectory}
+            currentFrame={currentFrame}
+            alignment={alignment}
+            fitViewRef={fitViewRef}
+          />
         </Canvas>
       </div>
 
@@ -321,6 +444,15 @@ export default function App() {
           <p className="hud__hint">
             Static Luma splat = level geometry. Timeline = ARKit camera replay only; the room does not animate.
           </p>
+          <p className="hud__hint hud__hint--compact">
+            Camera: drag rotate · scroll zoom · right-drag or middle-drag pan · WASD / arrows pan (Shift faster) · Q/E
+            vertical · Fit view recenters on path or default view without data.
+          </p>
+          <div className="hud__actions">
+            <button type="button" className="btn btn--primary" onClick={() => fitViewRef.current?.()}>
+              Fit view
+            </button>
+          </div>
         </div>
       </aside>
 

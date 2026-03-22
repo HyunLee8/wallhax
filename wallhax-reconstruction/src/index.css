@@ -51,6 +51,7 @@ body {
 
 .canvas-wrap canvas {
   display: block;
+  touch-action: none;
 }
 
 .hud,
@@ -102,6 +103,15 @@ body {
   color: var(--text-muted);
   border-left: 2px solid var(--accent-magenta);
   padding-left: 0.6rem;
+}
+
+.hud__hint--compact {
+  margin-top: 0.5rem;
+  border-left-color: rgba(0, 255, 255, 0.45);
+}
+
+.hud__actions {
+  margin-top: 0.65rem;
 }
 
 .timeline {
