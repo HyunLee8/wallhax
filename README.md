@@ -1,4 +1,4 @@
-# wallhax - First place AI & Data science Hoo Hacks
+# wallhax - 1st place AI & Data science Hoo Hacks
 
 Multi-device AR collaboration for iOS: devices stream camera pose over the network while a Mac relay forwards packets to peers and shows live trajectories. The app supports operation layouts for military, search and rescue, and firefighter scenarios (see `wallhax/UseCase.swift` and `wallhax/operations_layout/`).
 
