@@ -2,11 +2,17 @@
 
 ### 1st Place AI & Data Science — Hoo Hacks
 
-Multi-device AR collaboration for iOS: devices stream camera pose over the network while a Mac relay forwards packets to peers and shows live trajectories.
+Multiple iPhones map a space together in real-time using ARKit. Each device streams its camera pose over the network to a Mac relay, which forwards everything to connected peers and visualizes live trajectories. We built operation layouts for military, search & rescue, and firefighter scenarios — the idea is you walk through a building and everyone on the team sees where everyone else is and has been.
 
-[![WallHax](https://d112y698adiu2z.cloudfront.net/photos/production/software_photos/004/483/415/datas/gallery.jpg)](https://devpost.com/software/wallhax-896ck3?ref_content=user-portfolio&ref_feature=in_progress)
+A separate web viewer overlays the recorded camera paths on a Luma Gaussian splat of the space so you can scrub through the timeline after the fact.
 
-[![Demo Video](https://img.youtube.com/vi/II26dfXLtV0/maxresdefault.jpg)](https://www.youtube.com/watch?v=II26dfXLtV0)
+<p align="center">
+  <img src="mapper1.gif" width="260" />
+  <img src="mapper2.gif" width="260" />
+  <img src="mapper3.gif" width="260" />
+</p>
+
+> [Devpost](https://devpost.com/software/wallhax-896ck3?ref_content=user-portfolio&ref_feature=in_progress) · [Demo Video](https://www.youtube.com/watch?v=II26dfXLtV0)
 
 ## Setup
 
@@ -23,7 +29,7 @@ npm install
 npm run dev
 ```
 
-### Python Relay Server
+### Relay Server
 
 ```bash
 pip install -r requirements.txt
