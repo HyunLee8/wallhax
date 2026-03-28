@@ -9,7 +9,9 @@ A separate web viewer overlays the recorded camera paths on a Luma Gaussian spla
 <p align="center">
   <img src="mapper1.gif" width="260" />
   <img src="mapper2.gif" width="260" />
-  <img src="mapper3.gif" width="260" />
+</p>
+<p align="center">
+  <img src="mapper3.gif" width="520" />
 </p>
 
 > [Devpost](https://devpost.com/software/wallhax-896ck3?ref_content=user-portfolio&ref_feature=in_progress) · [Demo Video](https://www.youtube.com/watch?v=II26dfXLtV0)
