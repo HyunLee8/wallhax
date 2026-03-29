@@ -15,7 +15,7 @@
 ### iOS App
 
 1. Open `wallhax.xcodeproj` in Xcode.
-2. Build and run on a **physical iPhone or iPad** (ARKit requires a real device).
+2. Build and run on a **physical iPhone or iPad** (ARKit requires a real device, preferably one with a lidar scanner such as the one in the pro models).
 
 ### Web Viewer
 
