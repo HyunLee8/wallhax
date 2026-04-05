@@ -1,4 +1,4 @@
-# WallHax — 1st Place AI & Data Science, Hoo Hacks
+# WallHax
 
 <p align="center">
   <img src="mapper1.gif" width="49%" />
